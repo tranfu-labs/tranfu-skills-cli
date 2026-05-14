@@ -1,6 +1,7 @@
 import { program, CommanderError } from "commander";
 import { searchCommand } from "./commands/search.js";
 import { installCommand } from "./commands/install.js";
+import { listCommand } from "./commands/list.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -21,8 +22,16 @@ program
   .description("装公司 skill 到本地")
   .option("--scope <scope>", "user (默认) 或 project (git-root)", "user")
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
-  .option("--force", "强制覆盖已存在的同名目录 (仅对无 tranfu-skills 戳的目录生效, Phase 3.3)")
+  .option("--force", "强制覆盖已存在的同名目录 (对 absent / partial 戳生效)")
   .action(installCommand);
+
+program
+  .command("list")
+  .description("列出已装的公司 skill")
+  .option("--scope <scope>", "user (默认) 或 project", "user")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .option("--json", "JSON 输出")
+  .action(listCommand);
 
 try {
   await program.parseAsync(process.argv);
