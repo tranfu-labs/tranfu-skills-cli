@@ -1,5 +1,6 @@
 import { program, CommanderError } from "commander";
 import { searchCommand } from "./commands/search.js";
+import { installCommand } from "./commands/install.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -14,6 +15,13 @@ program
   .option("--top <n>", "返回前 N 条", "5")
   .option("--json", "JSON 输出")
   .action(searchCommand);
+
+program
+  .command("install <skill>")
+  .description("装公司 skill 到本地 (Phase 3.1 minimum: 无 --force)")
+  .option("--scope <scope>", "user (默认) 或 project (git-root)", "user")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .action(installCommand);
 
 try {
   await program.parseAsync(process.argv);

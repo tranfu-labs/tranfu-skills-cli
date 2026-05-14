@@ -1,0 +1,335 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { IndexJson, TfsError } from "../src/types.js";
+
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = join(
+    tmpdir(),
+    `install-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+  mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.doUnmock("node:os");
+  try {
+    rmSync(tmpHome, { recursive: true, force: true });
+  } catch { /* ignore */ }
+});
+
+const mockIndex: IndexJson = {
+  version: 1,
+  generated_at: "2026-05-14T00:00:00.000Z",
+  skills: [
+    {
+      name: "auth-helper",
+      type: "own",
+      description: "OAuth2 帮手",
+      path: "own-skills/auth-helper",
+      files: ["SKILL.md", "HISTORY.md"],
+      sha: "abc123",
+    },
+    {
+      name: "complex-skill",
+      type: "external",
+      description: "带子目录",
+      path: "external-skills/complex-skill",
+      files: ["SKILL.md", "_refs/diagram.png", "scripts/helper.sh"],
+      sha: "def456",
+      source_url: "https://github.com/example/complex",
+    },
+  ],
+};
+
+function mockFetchQueue(bodies: Array<{ body: string; status?: number }>) {
+  let i = 0;
+  return vi.fn().mockImplementation((url: string) => {
+    const r = bodies[i++];
+    if (!r) {
+      return Promise.reject(
+        new Error(`no mock response for fetch #${i - 1} url=${url}`)
+      );
+    }
+    const status = r.status ?? 200;
+    return Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: () => null },
+      text: () => Promise.resolve(r.body),
+    });
+  });
+}
+
+async function loadInstallWithHome() {
+  vi.doMock("node:os", async () => {
+    const actual = await vi.importActual<typeof import("node:os")>("node:os");
+    return { ...actual, homedir: () => tmpHome };
+  });
+  return await import("../src/commands/install.js");
+}
+
+function captureExit() {
+  return vi.spyOn(process, "exit").mockImplementation((() => {
+    throw new Error("process.exit called");
+  }) as never);
+}
+
+describe("install — happy path", () => {
+  it("装一个 skill 到 ~/.claude/skills/, 文件齐 + stamp 完整", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---\n# body" },
+        { body: "history\n" },
+      ])
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+    });
+
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    expect(existsSync(targetDir)).toBe(true);
+    expect(existsSync(join(targetDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(targetDir, "HISTORY.md"))).toBe(true);
+
+    const md = readFileSync(join(targetDir, "SKILL.md"), "utf8");
+    expect(md).toContain("installed_by: tranfu-skills");
+    expect(md).toContain("installed_version: abc123");
+    expect(md).toContain("installed_source: own");
+    expect(md).toMatch(/installed_at: \d{4}-\d{2}-\d{2}/);
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("✓ installed auth-helper");
+    expect(out).toContain("Restart Claude Code");
+  });
+
+  it("装到 ~/.codex/skills/ (--runtime=codex)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---\n" },
+        { body: "" },
+      ])
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installCommand("auth-helper", { scope: "user", runtime: "codex" });
+
+    expect(existsSync(join(tmpHome, ".codex", "skills", "auth-helper"))).toBe(
+      true
+    );
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("Restart Codex CLI");
+  });
+
+  it("处理 files 含子目录 (_refs/, scripts/)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: complex\ndescription: foo\n---" },
+        { body: "PNG-DATA" },
+        { body: "#!/bin/bash\n" },
+      ])
+    );
+    const { installCommand } = await loadInstallWithHome();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await installCommand("complex-skill", {
+      scope: "user",
+      runtime: "claude-code",
+    });
+
+    const targetDir = join(tmpHome, ".claude", "skills", "complex-skill");
+    expect(existsSync(join(targetDir, "_refs", "diagram.png"))).toBe(true);
+    expect(existsSync(join(targetDir, "scripts", "helper.sh"))).toBe(true);
+  });
+
+  it("--scope=project + git repo → 装到 git-root/.claude/skills", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth\ndescription: foo\n---" },
+        { body: "" },
+      ])
+    );
+    const gitRoot = join(tmpHome, "myproject");
+    mkdirSync(gitRoot, { recursive: true });
+    execSync("git init -q", { cwd: gitRoot });
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(gitRoot);
+
+    const { installCommand } = await loadInstallWithHome();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await installCommand("auth-helper", {
+      scope: "project",
+      runtime: "claude-code",
+    });
+
+    expect(
+      existsSync(join(gitRoot, ".claude", "skills", "auth-helper"))
+    ).toBe(true);
+    cwdSpy.mockRestore();
+  });
+});
+
+describe("install — error cases", () => {
+  it("skill 不在 index → exit 1 skill_not_found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(
+      installCommand("nonexistent", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_not_found");
+    expect(parsed.hint).toContain("tfs search");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("target 目录已存在 → exit 1 skill_already_installed (含 --force hint)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    mkdirSync(join(tmpHome, ".claude", "skills", "auth-helper"), {
+      recursive: true,
+    });
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_already_installed");
+    expect(parsed.hint).toContain("--force");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("--runtime invalid → exit 1 runtime_invalid", async () => {
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+
+    await expect(
+      installCommand("foo", { scope: "user", runtime: "vim" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("runtime_invalid");
+  });
+
+  it("--scope invalid → exit 1 scope_invalid", async () => {
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+
+    await expect(
+      installCommand("foo", { scope: "global", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("scope_invalid");
+  });
+
+  it("--scope project + 非 git repo → exit 1 git_repo_required", async () => {
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+    const nonGit = join(tmpHome, "nongit");
+    mkdirSync(nonGit);
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(nonGit);
+
+    await expect(
+      installCommand("foo", { scope: "project", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("git_repo_required");
+    cwdSpy.mockRestore();
+  });
+
+  it("文件 fetch 网络错 → exit 2 network_error (Phase 3.1 留残骸, 3.2 rollback)", async () => {
+    let callIdx = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() => {
+        callIdx++;
+        if (callIdx === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            text: () => Promise.resolve(JSON.stringify(mockIndex)),
+          });
+        }
+        return Promise.reject(new Error("ENETDOWN"));
+      })
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("network_error");
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+});

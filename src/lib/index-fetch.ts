@@ -1,20 +1,30 @@
 import { mkdirSync, readFileSync, writeFileSync, statSync } from "fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { IndexJson } from "../types.js";
 
 const INDEX_URL =
   "https://raw.githubusercontent.com/tranfu-labs/tranfu-skills/main/index.json";
-const CACHE_DIR = `${process.env.HOME}/.tfs/cache`;
-const CACHE_FILE = `${CACHE_DIR}/index.json`;
-const ETAG_FILE = `${CACHE_DIR}/index.etag`;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// Lazy resolution: 不在 module-load 时绑定 CACHE_DIR, 否则 vitest mock node:os homedir
+// 在 fetchIndex 调用时不会生效 (常量已经绑定真实 homedir). 每次调用走函数读最新 homedir.
+function cachePaths(): { dir: string; indexFile: string; etagFile: string } {
+  const dir = join(homedir(), ".tfs", "cache");
+  return {
+    dir,
+    indexFile: join(dir, "index.json"),
+    etagFile: join(dir, "index.etag"),
+  };
+}
+
 function ensureCacheDir(): void {
-  mkdirSync(CACHE_DIR, { recursive: true });
+  mkdirSync(cachePaths().dir, { recursive: true });
 }
 
 function readCache(): IndexJson | null {
   try {
-    const raw = readFileSync(CACHE_FILE, "utf8");
+    const raw = readFileSync(cachePaths().indexFile, "utf8");
     return JSON.parse(raw) as IndexJson;
   } catch {
     return null;
@@ -23,7 +33,7 @@ function readCache(): IndexJson | null {
 
 function readEtag(): string | null {
   try {
-    return readFileSync(ETAG_FILE, "utf8").trim();
+    return readFileSync(cachePaths().etagFile, "utf8").trim();
   } catch {
     return null;
   }
@@ -31,7 +41,7 @@ function readEtag(): string | null {
 
 function cacheAge(): number | null {
   try {
-    const stat = statSync(CACHE_FILE);
+    const stat = statSync(cachePaths().indexFile);
     return Date.now() - stat.mtimeMs;
   } catch {
     return null;
@@ -40,9 +50,10 @@ function cacheAge(): number | null {
 
 function writeCache(data: IndexJson, etag: string | null): void {
   ensureCacheDir();
-  writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), "utf8");
+  const p = cachePaths();
+  writeFileSync(p.indexFile, JSON.stringify(data, null, 2), "utf8");
   if (etag) {
-    writeFileSync(ETAG_FILE, etag, "utf8");
+    writeFileSync(p.etagFile, etag, "utf8");
   }
 }
 
