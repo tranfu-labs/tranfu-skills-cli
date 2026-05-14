@@ -2,12 +2,17 @@
  * doctor: SDK 形态 (供 init 等命令内部调用). 返回结构化结果, 不写 stdout/stderr.
  * CLI 形态 (`tfs doctor` 命令) 在 commands/doctor.ts 调用此 SDK + 人话渲染.
  *
- * Phase 6.1: SDK 骨架 + Node 版本 check.
- * Phase 6.2: CLI 形态包装.
- * Phase 6.3: + runtime 探测 check.
- * Phase 6.4: + PATH 一致性 check (fnm/nvm).
- * Phase 6.5: + 旧 ~/.tranfu-labs 缓存检测.
+ * Checks (Phase 6.1-6.5):
+ * - node-version (fatal): Node >=20
+ * - runtime (fatal): >=1 个 ~/.claude 或 ~/.codex 存在
+ * - tfs-in-path (warn): which tfs 能找到, 且与 process.execPath 同 node 目录
+ * - legacy-cache (warn): 检测旧 ~/.aistore-labs / ~/.tranfu-labs 缓存
  */
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { detectAvailableRuntimes, type Runtime } from "./runtime.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -54,10 +59,105 @@ export function _checkNodeVersionFromString(versionStr: string): DoctorCheck {
   };
 }
 
+/** Internal: runtime check, 接受探测函数注入便于 mock */
+export function _checkRuntimeFromList(available: Runtime[]): DoctorCheck {
+  if (available.length === 0) {
+    return {
+      name: "runtime",
+      status: "fail",
+      message:
+        "未检测到任何 runtime (~/.claude 或 ~/.codex). 先初始化 Claude Code 或 Codex CLI.",
+      fatal: true,
+    };
+  }
+  return {
+    name: "runtime",
+    status: "ok",
+    message: `探测到 ${available.length} 个 runtime: ${available.join(", ")}`,
+    fatal: true,
+  };
+}
+
+/** Internal: tfs PATH check, 接受 which 输出 + node 路径 */
+export function _checkTfsInPath(
+  whichTfsOutput: string | null,
+  nodeExecPath: string
+): DoctorCheck {
+  if (!whichTfsOutput) {
+    return {
+      name: "tfs-in-path",
+      status: "warn",
+      message:
+        "tfs 不在 PATH (可能还没 npm install -g, 或 fnm/nvm 切换了 Node 后没 use default)",
+      fatal: false,
+    };
+  }
+  // fnm/nvm 一致性: tfs 路径应在当前 node 的同目录或近邻 bin
+  // 简化: 检查 tfs 路径是否与 nodeExecPath 共享一段 ancestor (e.g. 同一 .fnm/versions 子树)
+  const nodeBinDir = nodeExecPath.replace(/\/node$/, "");
+  if (whichTfsOutput.startsWith(nodeBinDir)) {
+    return {
+      name: "tfs-in-path",
+      status: "ok",
+      message: `tfs at ${whichTfsOutput}`,
+      fatal: false,
+    };
+  }
+  // 路径不一致 — 可能 fnm 切版本了
+  return {
+    name: "tfs-in-path",
+    status: "warn",
+    message: `tfs 在 ${whichTfsOutput}, 但当前 Node 在 ${nodeExecPath}. fnm/nvm 切版本可能让 tfs 不可达, 建议 fnm use default.`,
+    fatal: false,
+  };
+}
+
+/** Internal: 旧缓存 check, 接受路径数组 */
+export function _checkLegacyCachePaths(found: string[]): DoctorCheck {
+  if (found.length === 0) {
+    return {
+      name: "legacy-cache",
+      status: "ok",
+      message: "无旧版 git-clone 缓存",
+      fatal: false,
+    };
+  }
+  return {
+    name: "legacy-cache",
+    status: "warn",
+    message: `检测到旧版缓存: ${found.join(", ")}. 新版 tfs 不依赖, 可手动 rm 清理.`,
+    fatal: false,
+  };
+}
+
+const LEGACY_CACHE_PATHS = [
+  ".aistore-labs/claude-skills",
+  ".tranfu-labs/claude-skills",
+  ".tranfu-labs/tranfu-skills",
+];
+
+function tryWhichTfs(): string | null {
+  try {
+    const out = execSync("command -v tfs 2>/dev/null", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 export function runDoctor(): DoctorResult {
+  const found = LEGACY_CACHE_PATHS
+    .map((p) => join(homedir(), p))
+    .filter(existsSync);
+
   const checks: DoctorCheck[] = [
     _checkNodeVersionFromString(process.versions.node),
-    // Phase 6.3+: runtime 探测 / PATH / 旧缓存
+    _checkRuntimeFromList(detectAvailableRuntimes()),
+    _checkTfsInPath(tryWhichTfs(), process.execPath),
+    _checkLegacyCachePaths(found),
   ];
   const ok = checks.every((c) => !c.fatal || c.status === "ok");
   return { checks, ok };

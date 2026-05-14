@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { _checkNodeVersionFromString, runDoctor } from "../src/lib/doctor.js";
+import {
+  _checkNodeVersionFromString,
+  _checkRuntimeFromList,
+  _checkTfsInPath,
+  _checkLegacyCachePaths,
+  runDoctor,
+} from "../src/lib/doctor.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -48,24 +54,101 @@ describe("doctor SDK — Node version check", () => {
   });
 });
 
-describe("runDoctor() SDK", () => {
-  it("返回 {checks, ok} 结构", () => {
+describe("doctor SDK — runtime check (6.3)", () => {
+  it("0 runtime → fail, fatal=true", () => {
+    const r = _checkRuntimeFromList([]);
+    expect(r.status).toBe("fail");
+    expect(r.fatal).toBe(true);
+    expect(r.message).toContain("未检测到");
+  });
+
+  it("1 runtime → ok, fatal=true, message 含名字", () => {
+    const r = _checkRuntimeFromList(["claude-code"]);
+    expect(r.status).toBe("ok");
+    expect(r.fatal).toBe(true);
+    expect(r.message).toContain("claude-code");
+  });
+
+  it("2 runtime → ok (列出两个)", () => {
+    const r = _checkRuntimeFromList(["claude-code", "codex"]);
+    expect(r.status).toBe("ok");
+    expect(r.message).toContain("claude-code");
+    expect(r.message).toContain("codex");
+  });
+});
+
+describe("doctor SDK — tfs-in-path check (6.4)", () => {
+  it("which tfs 找不到 → warn (非 fatal)", () => {
+    const r = _checkTfsInPath(null, "/usr/local/bin/node");
+    expect(r.status).toBe("warn");
+    expect(r.fatal).toBe(false);
+    expect(r.message).toContain("不在 PATH");
+  });
+
+  it("tfs 在 node 同目录 → ok", () => {
+    const r = _checkTfsInPath(
+      "/Users/x/.fnm/versions/v20/bin/tfs",
+      "/Users/x/.fnm/versions/v20/bin/node"
+    );
+    expect(r.status).toBe("ok");
+    expect(r.message).toContain(".fnm/versions/v20/bin/tfs");
+  });
+
+  it("tfs 跟 node 不同目录 → warn (fnm 切版本风险)", () => {
+    const r = _checkTfsInPath(
+      "/Users/x/.fnm/versions/v18/bin/tfs",
+      "/Users/x/.fnm/versions/v20/bin/node"
+    );
+    expect(r.status).toBe("warn");
+    expect(r.fatal).toBe(false);
+    expect(r.message).toContain("fnm");
+  });
+});
+
+describe("doctor SDK — legacy-cache check (6.5)", () => {
+  it("无旧缓存 → ok", () => {
+    const r = _checkLegacyCachePaths([]);
+    expect(r.status).toBe("ok");
+    expect(r.message).toContain("无旧版");
+  });
+
+  it("有 1 个旧路径 → warn (非 fatal)", () => {
+    const r = _checkLegacyCachePaths(["/Users/x/.tranfu-labs/tranfu-skills"]);
+    expect(r.status).toBe("warn");
+    expect(r.fatal).toBe(false);
+    expect(r.message).toContain("tranfu-skills");
+    expect(r.message).toContain("可手动 rm");
+  });
+
+  it("有多个旧路径 → warn 列出全部", () => {
+    const r = _checkLegacyCachePaths([
+      "/Users/x/.aistore-labs/claude-skills",
+      "/Users/x/.tranfu-labs/claude-skills",
+    ]);
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("aistore-labs");
+    expect(r.message).toContain("tranfu-labs");
+  });
+});
+
+describe("runDoctor() SDK (集成)", () => {
+  it("返回 {checks, ok} 结构, checks 含 4 个", () => {
     const r = runDoctor();
     expect(r).toHaveProperty("checks");
     expect(r).toHaveProperty("ok");
-    expect(Array.isArray(r.checks)).toBe(true);
+    expect(r.checks).toHaveLength(4);
+    const names = r.checks.map((c) => c.name);
+    expect(names).toEqual([
+      "node-version",
+      "runtime",
+      "tfs-in-path",
+      "legacy-cache",
+    ]);
   });
 
-  it("当前进程跑 → 必须 ok=true (因为 Node>=20 才能运行测试)", () => {
+  it("当前进程跑 → node-version=ok (因为 Node>=20 才能跑测试)", () => {
     const r = runDoctor();
-    expect(r.ok).toBe(true);
     expect(r.checks.find((c) => c.name === "node-version")?.status).toBe("ok");
-  });
-
-  it("Phase 6.1: 只有 1 个 check (node-version)", () => {
-    const r = runDoctor();
-    expect(r.checks).toHaveLength(1);
-    expect(r.checks[0]!.name).toBe("node-version");
   });
 
   it("ok 字段语义: 所有 fatal check 都 ok", () => {
