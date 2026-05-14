@@ -1,5 +1,6 @@
 import { fetchIndex } from "../lib/index-fetch.js";
 import { emitError } from "../lib/errors.js";
+import { getStaleHint, staleMarkerLine } from "../lib/stale-check.js";
 import type { TfsError, SkillEntry } from "../types.js";
 
 /**
@@ -17,26 +18,33 @@ export async function listCommand(opts: { json?: boolean }): Promise<void> {
   }
 
   const skills = index.skills;
+  const hint = await getStaleHint();
 
   if (opts.json) {
-    process.stdout.write(
-      JSON.stringify({
-        results: skills.map((s: SkillEntry) => ({
-          name: s.name,
-          type: s.type,
-          description: s.description,
-          path: s.path,
-          sha: s.sha,
-          ...(s.source_url ? { source_url: s.source_url } : {}),
-        })),
-        total: skills.length,
-      }) + "\n"
-    );
+    const payload: {
+      results: Array<{ name: string; type: string; description: string; path: string; sha: string; source_url?: string }>;
+      total: number;
+      stale_hint?: { outdated_count: number; names: string[] };
+    } = {
+      results: skills.map((s: SkillEntry) => ({
+        name: s.name,
+        type: s.type,
+        description: s.description,
+        path: s.path,
+        sha: s.sha,
+        ...(s.source_url ? { source_url: s.source_url } : {}),
+      })),
+      total: skills.length,
+    };
+    if (hint) payload.stale_hint = hint;
+    process.stdout.write(JSON.stringify(payload) + "\n");
     return;
   }
 
   if (skills.length === 0) {
     process.stdout.write("Remote index is empty.\n");
+    const marker = staleMarkerLine(hint);
+    if (marker) process.stdout.write("\n" + marker);
     return;
   }
 
@@ -49,4 +57,6 @@ export async function listCommand(opts: { json?: boolean }): Promise<void> {
       : s.description;
     process.stdout.write(`  ${s.name.padEnd(nameW)}   ${desc}   ${s.type}\n`);
   }
+  const marker = staleMarkerLine(hint);
+  if (marker) process.stdout.write("\n" + marker);
 }

@@ -1,8 +1,9 @@
 import { fetchIndex } from "../lib/index-fetch.js";
 import { matchSkills } from "../lib/match.js";
-import { renderHuman, renderJson } from "../lib/format.js";
+import { renderHuman } from "../lib/format.js";
 import { emitError } from "../lib/errors.js";
-import type { TfsError } from "../types.js";
+import { getStaleHint, staleMarkerLine } from "../lib/stale-check.js";
+import type { TfsError, SkillEntry } from "../types.js";
 
 export async function searchCommand(
   query: string,
@@ -26,9 +27,28 @@ export async function searchCommand(
   }
 
   const results = matchSkills(query, index.skills, top);
+  const hint = await getStaleHint();
+
   if (opts.json) {
-    process.stdout.write(renderJson(results) + "\n");
+    const payload: {
+      results: Array<Pick<SkillEntry, "name" | "type" | "description" | "path" | "sha">>;
+      total: number;
+      stale_hint?: { outdated_count: number; names: string[] };
+    } = {
+      results: results.map((s) => ({
+        name: s.name,
+        type: s.type,
+        description: s.description,
+        path: s.path,
+        sha: s.sha,
+      })),
+      total: results.length,
+    };
+    if (hint) payload.stale_hint = hint;
+    process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
     process.stdout.write(renderHuman(query, results) + "\n");
+    const marker = staleMarkerLine(hint);
+    if (marker) process.stdout.write("\n" + marker);
   }
 }

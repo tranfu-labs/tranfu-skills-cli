@@ -4,6 +4,7 @@ import { resolveRuntime, ALL_RUNTIMES, type Runtime } from "../lib/runtime.js";
 import { parseScope, resolveTargetPath } from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
+import { getStaleHint, staleMarkerLine } from "../lib/stale-check.js";
 import type { TfsError } from "../types.js";
 
 interface InstalledSkill {
@@ -102,8 +103,14 @@ export async function installedCommand(opts: {
     }
   }
 
+  const hint = await getStaleHint();
+
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ installed }) + "\n");
+    const payload: { installed: InstalledSkill[]; stale_hint?: { outdated_count: number; names: string[] } } = {
+      installed,
+    };
+    if (hint) payload.stale_hint = hint;
+    process.stdout.write(JSON.stringify(payload) + "\n");
     return;
   }
 
@@ -111,6 +118,8 @@ export async function installedCommand(opts: {
     process.stdout.write(
       `No tranfu-skills installed${runtimes.length === 1 ? ` (${runtimes[0]}, ${scope})` : ""}.\n`
     );
+    const marker = staleMarkerLine(hint);
+    if (marker) process.stdout.write("\n" + marker);
     return;
   }
 
@@ -120,9 +129,11 @@ export async function installedCommand(opts: {
   const nameW = Math.max(...installed.map((s) => s.name.length));
   for (const s of installed) {
     const shortSha = s.version.slice(0, 7);
-    const marker = s.status === "partial" ? " [partial]" : "";
+    const partialMarker = s.status === "partial" ? " [partial]" : "";
     process.stdout.write(
-      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${s.scope}${marker}\n`
+      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${s.scope}${partialMarker}\n`
     );
   }
+  const marker = staleMarkerLine(hint);
+  if (marker) process.stdout.write("\n" + marker);
 }
