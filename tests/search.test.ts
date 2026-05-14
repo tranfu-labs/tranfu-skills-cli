@@ -311,3 +311,50 @@ describe("--version", () => {
     }
   });
 });
+
+// ----- Test 12: missing query → exit 1, invalid_args JSON to stderr -----
+describe("invalid args", () => {
+  it("`tfs search` (no query) → exit 1, invalid_args JSON to stderr", async () => {
+    const { execSync } = await import("child_process");
+    let stdout = "";
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      stdout = execSync("node dist/cli.js search", {
+        cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err: any) {
+      stdout = err.stdout ?? "";
+      stderr = err.stderr ?? "";
+      exitCode = err.status ?? 1;
+    }
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    // stderr 必须是 JSON, 不是 commander 默认人话
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.error).toBe("invalid_args");
+    expect(parsed.exit_code).toBe(1);
+    expect(parsed.hint).toContain("--help");
+  });
+
+  it("`tfs unknown-command` → exit 1, invalid_args JSON to stderr", async () => {
+    const { execSync } = await import("child_process");
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      execSync("node dist/cli.js unknown-command", {
+        cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err: any) {
+      stderr = err.stderr ?? "";
+      exitCode = err.status ?? 1;
+    }
+    expect(exitCode).toBe(1);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.error).toBe("invalid_args");
+  });
+});
