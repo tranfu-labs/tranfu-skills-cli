@@ -214,6 +214,107 @@ installed_source: meta
   });
 });
 
+describe("init — Phase 7.4 双 runtime", () => {
+  it("--both → 装到两个 runtime", async () => {
+    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+    mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+    vi.stubGlobal(
+      "fetch",
+      mockFetchSequence(indexWithMetas, [
+        // claude-code: router + publish
+        "---\nname: tranfu-router\n---",
+        "---\nname: tranfu-publish\n---",
+        // codex: router + publish (复用文件内容)
+        "---\nname: tranfu-router\n---",
+        "---\nname: tranfu-publish\n---",
+      ])
+    );
+    const { initCommand } = await loadInitWithDoctor(true);
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await initCommand({ both: true });
+
+    expect(
+      existsSync(join(tmpHome, ".claude", "skills", "tranfu-router"))
+    ).toBe(true);
+    expect(
+      existsSync(join(tmpHome, ".codex", "skills", "tranfu-router"))
+    ).toBe(true);
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    // 跨 runtime → 每行带 (runtime) 标
+    expect(out).toContain("(claude-code)");
+    expect(out).toContain("(codex)");
+    expect(out).toContain("Restart Claude Code + Codex CLI");
+  });
+
+  it("_promptRuntimeChoice — 非 TTY → null", async () => {
+    const { _promptRuntimeChoice } = await import(
+      "../src/commands/init.js"
+    );
+    const choice = await _promptRuntimeChoice(
+      ["claude-code", "codex"],
+      () => {},
+      false  // 非 TTY
+    );
+    expect(choice).toBeNull();
+  });
+
+  it("_promptRuntimeChoice — 用户选 1 → claude-code", async () => {
+    const { _promptRuntimeChoice } = await import(
+      "../src/commands/init.js"
+    );
+    const choice = await _promptRuntimeChoice(
+      ["claude-code", "codex"],
+      () => {},
+      true, // TTY
+      async () => "1"
+    );
+    expect(choice).toBe("claude-code");
+  });
+
+  it("_promptRuntimeChoice — 用户选 3 → both", async () => {
+    const { _promptRuntimeChoice } = await import(
+      "../src/commands/init.js"
+    );
+    const choice = await _promptRuntimeChoice(
+      ["claude-code", "codex"],
+      () => {},
+      true,
+      async () => "3"
+    );
+    expect(choice).toBe("both");
+  });
+
+  it("_promptRuntimeChoice — 用户选 4 (cancel) → null", async () => {
+    const { _promptRuntimeChoice } = await import(
+      "../src/commands/init.js"
+    );
+    const choice = await _promptRuntimeChoice(
+      ["claude-code", "codex"],
+      () => {},
+      true,
+      async () => "4"
+    );
+    expect(choice).toBeNull();
+  });
+
+  it("_promptRuntimeChoice — 用户输入非法 → null", async () => {
+    const { _promptRuntimeChoice } = await import(
+      "../src/commands/init.js"
+    );
+    const choice = await _promptRuntimeChoice(
+      ["claude-code", "codex"],
+      () => {},
+      true,
+      async () => "abc"
+    );
+    expect(choice).toBeNull();
+  });
+});
+
 describe("init — 错误路径", () => {
   it("doctor fatal fail (Node 18) → init_precondition_failed exit 1", async () => {
     mkdirSync(join(tmpHome, ".claude"), { recursive: true });

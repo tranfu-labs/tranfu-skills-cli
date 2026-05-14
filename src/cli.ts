@@ -54,7 +54,8 @@ program
 program
   .command("init")
   .description("一次性 bootstrap: 装 tranfu-router + tranfu-publish meta-skill 到当前 runtime")
-  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测; 多 runtime 时必传)")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传单 runtime 自动探测; 多 runtime + TTY 走交互)")
+  .option("--both", "装到所有探到的 runtime (claude-code + codex)")
   .action(initCommand);
 
 program
