@@ -20,6 +20,7 @@ program
   .description("搜公司 skill 库")
   .option("--top <n>", "返回前 N 条", "5")
   .option("--json", "JSON 输出")
+  .option("--runtime <runtime>", "(忽略, 搜索 runtime-agnostic; 接受 flag 让 router 调用一致)")
   .action(searchCommand);
 
 program
@@ -34,6 +35,7 @@ program
   .command("list")
   .description("列出公司库 (远端) 全部 skill")
   .option("--json", "JSON 输出")
+  .option("--runtime <runtime>", "(忽略, 远端 list 与本地 runtime 无关; 接受 flag 让 router 一致)")
   .action(listCommand);
 
 program
