@@ -218,6 +218,151 @@ describe("install — error cases", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("Phase 3.3: 无戳目录 + --force → rm 旧 + 装新 + 戳完整", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---\n# fresh body" },
+        { body: "fresh history\n" },
+      ])
+    );
+    // pre-seed 无戳的同名目录 (e.g. 用户手装)
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    mkdirSync(targetDir, { recursive: true });
+    require("node:fs").writeFileSync(
+      join(targetDir, "SKILL.md"),
+      "---\nname: auth-helper\ndescription: handmade\n---\n# old body\n"
+    );
+    require("node:fs").writeFileSync(
+      join(targetDir, "stale-file.txt"),
+      "should be gone after --force"
+    );
+
+    const { installCommand } = await loadInstallWithHome();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+      force: true,
+    });
+
+    // 旧文件不存在, 新装完整
+    expect(existsSync(join(targetDir, "stale-file.txt"))).toBe(false);
+    expect(existsSync(join(targetDir, "HISTORY.md"))).toBe(true);
+    const md = readFileSync(join(targetDir, "SKILL.md"), "utf8");
+    expect(md).toContain("installed_by: tranfu-skills");
+    expect(md).toContain("# fresh body");
+    expect(md).not.toContain("# old body");
+  });
+
+  it("Phase 3.3: 无戳目录 + 无 --force → skill_already_installed (hint 含 --force)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    mkdirSync(join(tmpHome, ".claude", "skills", "auth-helper"), {
+      recursive: true,
+    });
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_already_installed");
+    expect(parsed.message).toContain("stamp: absent");
+    expect(parsed.hint).toContain("--force");
+  });
+
+  it("Phase 3.3: 有 intact 戳 + --force → 仍 skill_already_installed (3.5 才处理)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    mkdirSync(targetDir, { recursive: true });
+    require("node:fs").writeFileSync(
+      join(targetDir, "SKILL.md"),
+      `---
+name: auth-helper
+description: prev install
+installed_by: tranfu-skills
+installed_version: old-sha
+installed_at: 2026-01-01
+installed_source: own
+---
+`
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+
+    await expect(
+      installCommand("auth-helper", {
+        scope: "user",
+        runtime: "claude-code",
+        force: true,
+      })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_already_installed");
+    expect(parsed.message).toContain("stamp: intact");
+    expect(parsed.hint).toContain("3.5");  // 提示 update/noop 留 3.5
+  });
+
+  it("Phase 3.3: renameSync 抛 plain Error → 走 internal_error (修 3.2 留的 cast bug)", async () => {
+    // 此 case 模拟 fs renameSync 抛 plain Error (e.g. EXDEV cross-device).
+    // 不依赖真实 fs error, 只依赖 install.ts catch 块逻辑 — 用一个非 TfsError shape 的对象触发.
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: foo\n---" },
+        { body: "" },
+      ])
+    );
+    // 用 vi.doMock 拦截 fs renameSync 让它抛
+    vi.doMock("node:fs", async () => {
+      const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      return {
+        ...actual,
+        renameSync: () => {
+          throw new Error("EXDEV: cross-device link not permitted");
+        },
+      };
+    });
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("internal_error");
+    expect(parsed.message).toContain("EXDEV");
+    expect(exitSpy).toHaveBeenCalledWith(3);
+    vi.doUnmock("node:fs");
+  });
+
   it("target 目录已存在 → exit 1 skill_already_installed (含 --force hint)", async () => {
     vi.stubGlobal(
       "fetch",

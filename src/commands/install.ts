@@ -3,9 +3,20 @@ import { dirname, join } from "node:path";
 import { fetchIndex } from "../lib/index-fetch.js";
 import { resolveRuntime } from "../lib/runtime.js";
 import { parseScope, resolveTargetPath } from "../lib/paths.js";
-import { writeStamp } from "../lib/stamp.js";
+import { readStamp, writeStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
 import type { TfsError } from "../types.js";
+
+/** Type guard: 区分 lib throw 的 TfsError 与 fs/network 原生 Error */
+function isTfsError(e: unknown): e is TfsError {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "error" in e &&
+    "message" in e &&
+    "exit_code" in e
+  );
+}
 
 const RAW_BASE =
   "https://raw.githubusercontent.com/tranfu-labs/tranfu-skills/main";
@@ -43,7 +54,7 @@ async function fetchFile(url: string): Promise<string> {
 
 export async function installCommand(
   skillName: string,
-  opts: { scope?: string; runtime?: string }
+  opts: { scope?: string; runtime?: string; force?: boolean }
 ): Promise<void> {
   // 1. 解析 runtime / scope / target
   let runtime: ReturnType<typeof resolveRuntime>;
@@ -75,16 +86,29 @@ export async function installCommand(
     });
   }
 
-  // 4. target 已存在 → 报 skill_already_installed (Phase 3.1 不做 --force/半残戳/noop, 留给 3.3/3.4/3.5)
+  // 4. target 已存在 → 读戳判断行为
+  //    Phase 3.3 scope: 无戳 + --force → rm + 继续; 其他都 skill_already_installed
+  //    Phase 3.4/3.5 留: partial stamp / intact stamp 的 update / noop 路径
   const targetDir = join(target, skillName);
   if (existsSync(targetDir)) {
-    return emitError({
-      error: "skill_already_installed",
-      message: `${targetDir} 已存在`,
-      hint:
-        "Phase 3.3 起可用 --force 覆盖; 目前请手动 rm 该目录后重试, 或换 --scope",
-    exit_code: 1,
-    });
+    const stamp = readStamp(join(targetDir, "SKILL.md"));
+    if (stamp.status === "absent" && opts.force) {
+      // --force 覆盖用户手装或第三方 skill
+      rmSync(targetDir, { recursive: true, force: true });
+    } else {
+      const hint =
+        stamp.status === "absent"
+          ? "用 --force 覆盖 (会先 rm 该目录). Phase 3.4 起也支持半残戳, 3.5 起 intact 戳走 noop/update."
+          : stamp.status === "partial"
+            ? "检测到不完整的安装戳 (缺 installed_version 等); Phase 3.4 起 --force 会重写它. 当前请手动 rm."
+            : "已是 tranfu-skills 装过的完整 skill; Phase 3.5 起 sha 一致走 noop, 不一致走 update. 当前请手动 rm.";
+      return emitError({
+        error: "skill_already_installed",
+        message: `${targetDir} 已存在 (stamp: ${stamp.status})`,
+        hint,
+        exit_code: 1,
+      });
+    }
   }
 
   // 5. Phase 3.2: staging + atomic rename
@@ -119,7 +143,16 @@ export async function installCommand(
   } catch (e) {
     // rollback: 清理 staging
     try { rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    return emitError(e as TfsError);
+    // 区分 TfsError vs 原生 Error (e.g. renameSync EXDEV / EPERM)
+    if (isTfsError(e)) {
+      return emitError(e);
+    }
+    return emitError({
+      error: "internal_error",
+      message: `install 内部错误: ${e instanceof Error ? e.message : String(e)}`,
+      hint: "可能是文件系统问题 (跨分区 rename / 权限). 请报 issue.",
+      exit_code: 3,
+    });
   }
 
   // 6. 成功输出 (V3 §8.1)

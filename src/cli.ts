@@ -18,9 +18,10 @@ program
 
 program
   .command("install <skill>")
-  .description("装公司 skill 到本地 (Phase 3.1 minimum: 无 --force)")
+  .description("装公司 skill 到本地")
   .option("--scope <scope>", "user (默认) 或 project (git-root)", "user")
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .option("--force", "强制覆盖已存在的同名目录 (仅对无 tranfu-skills 戳的目录生效, Phase 3.3)")
   .action(installCommand);
 
 try {
