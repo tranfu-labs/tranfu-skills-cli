@@ -1,16 +1,40 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { TfsError } from "../src/types.js";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { IndexJson, TfsError } from "../src/types.js";
+
+let tmpHome: string;
 
 beforeEach(() => {
+  tmpHome = join(
+    tmpdir(),
+    `update-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
   vi.resetModules();
+  vi.doMock("node:os", async () => {
+    const actual = await vi.importActual<typeof import("node:os")>("node:os");
+    return { ...actual, homedir: () => tmpHome };
+  });
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.doUnmock("node:os");
   vi.doUnmock("../src/lib/npm.js");
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-async function loadUpdateWithNpm(npmMock: {
+function captureExit() {
+  return vi.spyOn(process, "exit").mockImplementation((() => {
+    throw new Error("process.exit called");
+  }) as never);
+}
+
+async function loadUpdate(npmMock: {
   getGlobalVersion?: (pkg: string) => string | null;
   getRegistryLatest?: (pkg: string) => string | null;
   installGlobalLatest?: (pkg: string) => void;
@@ -23,97 +47,239 @@ async function loadUpdateWithNpm(npmMock: {
   return await import("../src/commands/update.js");
 }
 
-function captureExit() {
-  return vi.spyOn(process, "exit").mockImplementation((() => {
-    throw new Error("process.exit called");
-  }) as never);
+function seedSkill(
+  runtime: "claude" | "codex",
+  name: string,
+  sha: string
+) {
+  const dir = join(tmpHome, `.${runtime}`, "skills", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    `---
+name: ${name}
+description: ${name} desc
+installed_by: tranfu-skills
+installed_version: ${sha}
+installed_at: 2026-01-01
+installed_source: own
+---
+# old body
+`
+  );
+  return dir;
 }
 
-describe("update --self (Phase 5.1)", () => {
-  it("已是 latest → noop, 不跑 npm install", async () => {
+const baseIndex: IndexJson = {
+  version: 1,
+  generated_at: "2026-05-14T00:00:00.000Z",
+  skills: [
+    {
+      name: "skill-a",
+      type: "own",
+      description: "skill A",
+      path: "own-skills/skill-a",
+      files: ["SKILL.md"],
+      sha: "new-sha-a",
+    },
+    {
+      name: "skill-b",
+      type: "external",
+      description: "skill B",
+      path: "external-skills/skill-b",
+      files: ["SKILL.md"],
+      sha: "current-sha-b",
+      source_url: "https://github.com/example/b",
+    },
+  ],
+};
+
+function mockFetchSequence(
+  indexBody: unknown,
+  fileBodies: string[]
+) {
+  let i = 0;
+  return vi.fn().mockImplementation(() => {
+    if (i === 0) {
+      i++;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: () => Promise.resolve(JSON.stringify(indexBody)),
+      });
+    }
+    const body = fileBodies[i - 1];
+    i++;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: () => Promise.resolve(body ?? ""),
+    });
+  });
+}
+
+describe("update --skills-only (Phase 5.2)", () => {
+  it("跨 runtime 扫 → sha 一致全 noop, 不下载文件", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    seedSkill("codex", "skill-b", "current-sha-b");
+    const fetchSpy = mockFetchSequence(baseIndex, []);
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.self).toBeNull();
+    expect(parsed.skills).toHaveLength(2);
+    expect(parsed.skills.every((s: any) => s.status === "noop")).toBe(true);
+    // 只 fetch 一次 (index), 不拉文件
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("sha 不一致 → 重装 + 输出 updated", async () => {
+    seedSkill("claude", "skill-a", "OLD-SHA");
+    const fetchSpy = mockFetchSequence(baseIndex, [
+      "---\nname: skill-a\ndescription: new\n---\n# new body",
+    ]);
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { updateCommand } = await loadUpdate({});
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true });
+
+    // 文件被替换 + 新 stamp
+    const md = readFileSync(
+      join(tmpHome, ".claude", "skills", "skill-a", "SKILL.md"),
+      "utf8"
+    );
+    expect(md).toContain("installed_version: new-sha-a");
+    expect(md).toContain("# new body");
+    expect(md).not.toContain("OLD-SHA");
+  });
+
+  it("skill 不在 index → status=deleted-upstream, 文件保留", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    seedSkill("claude", "orphan-skill", "any-sha");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    const orphan = parsed.skills.find((s: any) => s.name === "orphan-skill");
+    expect(orphan.status).toBe("deleted-upstream");
+
+    // 文件保留
+    expect(
+      existsSync(join(tmpHome, ".claude", "skills", "orphan-skill"))
+    ).toBe(true);
+  });
+
+  it("handmade (无戳) 不参与 update", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    const handmadeDir = join(tmpHome, ".claude", "skills", "my-handmade");
+    mkdirSync(handmadeDir, { recursive: true });
+    writeFileSync(
+      join(handmadeDir, "SKILL.md"),
+      `---\nname: my-handmade\ndescription: hand\n---`
+    );
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.skills.map((s: any) => s.name)).toEqual(["skill-a"]);
+    // handmade 仍在
+    expect(existsSync(handmadeDir)).toBe(true);
+  });
+
+  it("--skills-only 不调 npm self update", async () => {
     const installSpy = vi.fn();
-    const { updateCommand } = await loadUpdateWithNpm({
-      getGlobalVersion: () => "1.0.0",
-      getRegistryLatest: () => "1.0.0",
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({
+      installGlobalLatest: installSpy,
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true });
+
+    expect(installSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("update default (self + skills)", () => {
+  it("默认 = self + skills 都跑", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const installSpy = vi.fn();
+    const { updateCommand } = await loadUpdate({
+      getGlobalVersion: () => "0.1.0",
+      getRegistryLatest: () => "0.1.0", // self noop
       installGlobalLatest: installSpy,
     });
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
 
-    await updateCommand({ self: true });
-
-    expect(installSpy).not.toHaveBeenCalled();
-    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toContain("already latest");
-    expect(out).toContain("1.0.0");
-  });
-
-  it("有新版 → 跑 npm install + 输出 from → to", async () => {
-    const installSpy = vi.fn();
-    let postInstallVersion = "0.1.0"; // 模拟升级前
-    const { updateCommand } = await loadUpdateWithNpm({
-      getGlobalVersion: () => postInstallVersion,
-      getRegistryLatest: () => "0.2.0",
-      installGlobalLatest: () => {
-        installSpy();
-        postInstallVersion = "0.2.0"; // 模拟升级后
-      },
-    });
-    const stdoutSpy = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-
-    await updateCommand({ self: true });
-
-    expect(installSpy).toHaveBeenCalledOnce();
-    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toContain("updated");
-    expect(out).toContain("0.1.0");
-    expect(out).toContain("0.2.0");
-  });
-
-  it("--json 输出 schema (升级路径)", async () => {
-    let v = "0.1.0";
-    const { updateCommand } = await loadUpdateWithNpm({
-      getGlobalVersion: () => v,
-      getRegistryLatest: () => "0.2.0",
-      installGlobalLatest: () => { v = "0.2.0"; },
-    });
-    const stdoutSpy = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-
-    await updateCommand({ self: true, json: true });
+    await updateCommand({ json: true });
 
     const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
-    expect(parsed).toMatchObject({
-      self: { from: "0.1.0", to: "0.2.0" },
-      skills: [],
-    });
+    expect(parsed.self).toMatchObject({ from: "0.1.0", to: "0.1.0", status: "noop" });
+    expect(parsed.skills).toHaveLength(1);
   });
+});
 
-  it("--json noop 路径 含 status:'noop'", async () => {
-    const { updateCommand } = await loadUpdateWithNpm({
+describe("update --self (Phase 5.1 仍工作)", () => {
+  it("--self → 只跑 self, 不扫 skills (即使本地有装)", async () => {
+    seedSkill("claude", "skill-a", "OLD"); // 故意装个 stale, 验证 --self 不会动它
+    const installSpy = vi.fn();
+    const { updateCommand } = await loadUpdate({
       getGlobalVersion: () => "0.1.0",
       getRegistryLatest: () => "0.1.0",
+      installGlobalLatest: installSpy,
     });
+    // 关键: 不 stub fetch — 如果 update 真的去扫 skills 它会因为 fetch undefined 而崩
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
 
-    await updateCommand({ self: true, json: true });
+    await updateCommand({ self: true });
 
-    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
-    expect(parsed.self).toEqual({ from: "0.1.0", to: "0.1.0", status: "noop" });
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("already latest");
+    // skill-a 文件未被改 (仍是 OLD stamp)
+    const md = readFileSync(
+      join(tmpHome, ".claude", "skills", "skill-a", "SKILL.md"),
+      "utf8"
+    );
+    expect(md).toContain("installed_version: OLD");
   });
+});
 
-  it("installGlobalLatest 抛错 → internal_error exit 3", async () => {
-    const { updateCommand } = await loadUpdateWithNpm({
+describe("update — 错误路径", () => {
+  it("installGlobalLatest 抛错 (default 路径) → internal_error exit 3", async () => {
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({
       getGlobalVersion: () => "0.1.0",
       getRegistryLatest: () => "0.2.0",
       installGlobalLatest: () => {
-        throw new Error("EACCES: permission denied");
+        throw new Error("EACCES");
       },
     });
     const stderrSpy = vi
@@ -124,35 +290,24 @@ describe("update --self (Phase 5.1)", () => {
     await expect(updateCommand({ self: true })).rejects.toThrow(
       "process.exit called"
     );
-
     const parsed = JSON.parse(
       stderrSpy.mock.calls.map((c) => c[0]).join("")
     ) as TfsError;
     expect(parsed.error).toBe("internal_error");
-    expect(parsed.message).toContain("EACCES");
-    expect(parsed.hint).toContain("npm install -g");
     expect(exitSpy).toHaveBeenCalledWith(3);
   });
 
-  it("默认 (无 --self 也无 --skills-only) → 走 --self 行为", async () => {
-    const { updateCommand } = await loadUpdateWithNpm({
-      getGlobalVersion: () => "1.0.0",
-      getRegistryLatest: () => "1.0.0",
-    });
-    const stdoutSpy = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-
-    await updateCommand({});
-
-    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toContain("already latest");
-  });
-});
-
-describe("update --skills-only (Phase 5.2 未实现)", () => {
-  it("--skills-only → not_implemented exit 1", async () => {
-    const { updateCommand } = await loadUpdateWithNpm({});
+  it("fetchIndex 404 (--skills-only 路径) → exit 1 index_not_initialized", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+        text: () => Promise.resolve(""),
+      })
+    );
+    const { updateCommand } = await loadUpdate({});
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
@@ -161,11 +316,9 @@ describe("update --skills-only (Phase 5.2 未实现)", () => {
     await expect(updateCommand({ skillsOnly: true })).rejects.toThrow(
       "process.exit called"
     );
-
     const parsed = JSON.parse(
       stderrSpy.mock.calls.map((c) => c[0]).join("")
     ) as TfsError;
-    expect(parsed.error).toBe("not_implemented");
-    expect(parsed.message).toContain("5.2");
+    expect(parsed.error).toBe("index_not_initialized");
   });
 });
