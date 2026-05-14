@@ -384,3 +384,97 @@ describe("invalid args", () => {
     expect(parsed.error).toBe("invalid_args");
   });
 });
+
+describe("search — slice-4 installed/outdated 标记", () => {
+  function seedStamp(name: string, sha: string) {
+    const skillsDir = join(tmpHome, ".claude", "skills", name);
+    mkdirSync(skillsDir, { recursive: true });
+    require("node:fs").writeFileSync(
+      join(skillsDir, "SKILL.md"),
+      `---
+name: ${name}
+description: ${name} desc
+installed_by: tranfu-skills
+installed_version: ${sha}
+installed_at: 2026-01-01
+installed_source: own
+---
+# body
+`
+    );
+  }
+
+  it("--json: installed=true + outdated=true when stamp sha != index sha", async () => {
+    mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+    seedStamp("auth-helper", "old-sha"); // index has "abc123"
+    vi.stubGlobal("fetch", mockFetchOk(mockIndex));
+
+    const { searchCommand } = await import("../src/commands/search.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await searchCommand("auth", { top: "5", json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    const auth = parsed.results.find((r: any) => r.name === "auth-helper");
+    expect(auth.installed).toBe(true);
+    expect(auth.outdated).toBe(true);
+  });
+
+  it("--json: installed=true + outdated=false when stamp sha == index sha", async () => {
+    mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+    seedStamp("auth-helper", "abc123"); // matches index
+    vi.stubGlobal("fetch", mockFetchOk(mockIndex));
+
+    const { searchCommand } = await import("../src/commands/search.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await searchCommand("auth", { top: "5", json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    const auth = parsed.results.find((r: any) => r.name === "auth-helper");
+    expect(auth.installed).toBe(true);
+    expect(auth.outdated).toBe(false);
+  });
+
+  it("--json: installed=false + outdated=null when not installed", async () => {
+    mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+    // 不 seed 任何 skill
+    vi.stubGlobal("fetch", mockFetchOk(mockIndex));
+
+    const { searchCommand } = await import("../src/commands/search.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await searchCommand("auth", { top: "5", json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    const auth = parsed.results.find((r: any) => r.name === "auth-helper");
+    expect(auth.installed).toBe(false);
+    expect(auth.outdated).toBeNull();
+  });
+
+  it("text: outdated 行追 ' [installed, outdated]'; latest 追 ' [installed]'; 未装无 marker", async () => {
+    mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+    seedStamp("auth-helper", "old-sha"); // outdated
+    seedStamp("deploy-pipeline", "def456"); // latest (index sha)
+    // karpathy-llm 未装
+    vi.stubGlobal("fetch", mockFetchOk(mockIndex));
+
+    const { searchCommand } = await import("../src/commands/search.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await searchCommand("a", { top: "5" });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toMatch(/auth-helper.*\[installed, outdated\]/);
+    expect(out).toMatch(/deploy-pipeline.*\[installed\](?!,)/);
+    expect(out).not.toMatch(/karpathy-llm.*\[installed/);
+  });
+});
