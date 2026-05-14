@@ -282,6 +282,76 @@ describe("install — error cases", () => {
     expect(parsed.hint).toContain("--force");
   });
 
+  it("Phase 3.4: 半残戳 (缺 installed_version) + --force → 重写完整", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---\n# fresh" },
+        { body: "fresh history\n" },
+      ])
+    );
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    mkdirSync(targetDir, { recursive: true });
+    // 半残戳: 有 installed_by 但缺 installed_version
+    require("node:fs").writeFileSync(
+      join(targetDir, "SKILL.md"),
+      `---
+name: auth-helper
+description: corrupt
+installed_by: tranfu-skills
+installed_at: 2026-01-01
+installed_source: own
+---
+# corrupt body
+`
+    );
+    const { installCommand } = await loadInstallWithHome();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+      force: true,
+    });
+    // 重写: 新 stamp 完整, 旧 corrupt body 没了
+    const md = readFileSync(join(targetDir, "SKILL.md"), "utf8");
+    expect(md).toContain("installed_version: abc123");  // 新 sha 写上了
+    expect(md).toContain("# fresh");
+    expect(md).not.toContain("# corrupt body");
+  });
+
+  it("Phase 3.4: 半残戳 + 无 --force → skill_already_installed (hint 提示 partial)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    mkdirSync(targetDir, { recursive: true });
+    require("node:fs").writeFileSync(
+      join(targetDir, "SKILL.md"),
+      `---
+installed_by: tranfu-skills
+installed_at: 2026-01-01
+---
+`
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    captureExit();
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_already_installed");
+    expect(parsed.message).toContain("stamp: partial");
+    expect(parsed.hint).toContain("不完整的安装戳");
+    expect(parsed.hint).toContain("--force");
+  });
+
   it("Phase 3.3: 有 intact 戳 + --force → 仍 skill_already_installed (3.5 才处理)", async () => {
     vi.stubGlobal(
       "fetch",

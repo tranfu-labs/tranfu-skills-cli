@@ -92,15 +92,17 @@ export async function installCommand(
   const targetDir = join(target, skillName);
   if (existsSync(targetDir)) {
     const stamp = readStamp(join(targetDir, "SKILL.md"));
-    if (stamp.status === "absent" && opts.force) {
-      // --force 覆盖用户手装或第三方 skill
+    // Phase 3.3: absent + --force 覆盖
+    // Phase 3.4: partial + --force 覆盖 (半残戳视为损坏, --force 重写)
+    // Phase 3.5 留: intact + sha 一致 noop / sha 不一致直接覆盖
+    if ((stamp.status === "absent" || stamp.status === "partial") && opts.force) {
       rmSync(targetDir, { recursive: true, force: true });
     } else {
       const hint =
         stamp.status === "absent"
-          ? "用 --force 覆盖 (会先 rm 该目录). Phase 3.4 起也支持半残戳, 3.5 起 intact 戳走 noop/update."
+          ? "用 --force 覆盖 (会先 rm 该目录, 销毁性). Phase 3.5 起 intact 戳走 noop/update."
           : stamp.status === "partial"
-            ? "检测到不完整的安装戳 (缺 installed_version 等); Phase 3.4 起 --force 会重写它. 当前请手动 rm."
+            ? "检测到不完整的安装戳 (缺 installed_version 等). 用 --force 重写它 (rm 旧目录 + 重装)."
             : "已是 tranfu-skills 装过的完整 skill; Phase 3.5 起 sha 一致走 noop, 不一致走 update. 当前请手动 rm.";
       return emitError({
         error: "skill_already_installed",
