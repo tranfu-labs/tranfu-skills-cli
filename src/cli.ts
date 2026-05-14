@@ -2,6 +2,7 @@ import { program, CommanderError } from "commander";
 import { searchCommand } from "./commands/search.js";
 import { installCommand } from "./commands/install.js";
 import { listCommand } from "./commands/list.js";
+import { uninstallCommand } from "./commands/uninstall.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -32,6 +33,13 @@ program
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
   .option("--json", "JSON 输出")
   .action(listCommand);
+
+program
+  .command("uninstall <skill>")
+  .description("卸载已装的公司 skill (仅删 tranfu-skills 装的)")
+  .option("--scope <scope>", "user (默认) 或 project", "user")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .action(uninstallCommand);
 
 try {
   await program.parseAsync(process.argv);
