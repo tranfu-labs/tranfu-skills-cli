@@ -323,17 +323,18 @@ describe("fetchIndex error cases", () => {
 describe("--version", () => {
   it("--version → exit 0, prints package.json version", async () => {
     const { execSync } = await import("child_process");
+    const { default: pkg } = await import("../package.json", { with: { type: "json" } });
+    const expectedVersion = pkg.version;
     // Build must exist; skip if dist not built yet
     try {
       const output = execSync("node dist/cli.js --version", {
         cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
         encoding: "utf8",
       });
-      expect(output.trim()).toMatch(/0\.1\.0/);
+      expect(output.trim()).toBe(expectedVersion);
     } catch {
-      // If dist not built, test the version from package.json directly
-      const { default: pkg } = await import("../package.json", { with: { type: "json" } });
-      expect(pkg.version).toMatch(/0\.1\.0/);
+      // If dist not built, just verify package.json has a valid semver
+      expect(expectedVersion).toMatch(/^\d+\.\d+\.\d+/);
     }
   });
 });
