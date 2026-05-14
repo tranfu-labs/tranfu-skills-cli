@@ -84,8 +84,118 @@ describe("uninstall — happy paths", () => {
   });
 });
 
+describe("uninstall — registry-driven (no flags)", () => {
+  function seedCodex(name: string, fm: string) {
+    const dir = join(tmpHome, ".codex", "skills", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), `---\n${fm}\n---\n# body\n`);
+    return dir;
+  }
+
+  it("无 flag + registry 找到 1 处 → 删 + ✓ uninstalled", async () => {
+    const dir = seedSkill("foo", intactFm);
+    const { uninstallCommand } = await loadUninstall();
+    // 预先 read 触发 bootstrap, 让 registry 知道 foo
+    const reg = await import("../src/lib/registry.js");
+    reg.readRegistry();
+
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await uninstallCommand("foo", {});
+
+    expect(existsSync(dir)).toBe(false);
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("✓ uninstalled foo");
+  });
+
+  it("无 flag + registry 找到 0 处 → skill_not_found, hint 提到 tfs installed", async () => {
+    const { uninstallCommand } = await loadUninstall();
+    const reg = await import("../src/lib/registry.js");
+    reg.readRegistry();
+
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(uninstallCommand("nonexistent", {})).rejects.toThrow(
+      "process.exit called"
+    );
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("skill_not_found");
+    expect(parsed.hint).toContain("tfs installed");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("无 flag + registry 找到 2 处 + 非 TTY → ambiguous_target + 列出位置", async () => {
+    const dirA = seedSkill("shared", intactFm);
+    const dirB = seedCodex(
+      "shared",
+      intactFm.replace("name: foo", "name: shared")
+    );
+    const { uninstallCommand } = await loadUninstall();
+    const reg = await import("../src/lib/registry.js");
+    reg.readRegistry();
+
+    // 模拟非 TTY
+    const origTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    try {
+      await expect(uninstallCommand("shared", {})).rejects.toThrow(
+        "process.exit called"
+      );
+      const parsed = JSON.parse(
+        stderrSpy.mock.calls.map((c) => c[0]).join("")
+      ) as TfsError;
+      expect(parsed.error).toBe("ambiguous_target");
+      expect(parsed.message).toContain("shared");
+      expect(parsed.message).toContain(dirA);
+      expect(parsed.message).toContain(dirB);
+      expect(parsed.hint).toContain("--runtime");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      // 没删
+      expect(existsSync(dirA)).toBe(true);
+      expect(existsSync(dirB)).toBe(true);
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: origTTY,
+        configurable: true,
+      });
+    }
+  });
+
+  it("显式 --runtime + --scope → 跳 registry 走原 r1 单 scope 行为 (零漂移)", async () => {
+    const dir = seedSkill("foo", intactFm);
+    const { uninstallCommand } = await loadUninstall();
+    // 此处特意不预 bootstrap registry — 测显式路径不依赖 registry
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await uninstallCommand("foo", { runtime: "claude-code", scope: "user" });
+
+    expect(existsSync(dir)).toBe(false);
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("✓ uninstalled foo");
+  });
+});
+
 describe("uninstall — error cases", () => {
-  it("目录不存在 → skill_not_found + hint 提到 tfs list", async () => {
+  it("目录不存在 → skill_not_found + hint 提到 tfs installed", async () => {
     const { uninstallCommand } = await loadUninstall();
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
@@ -103,7 +213,7 @@ describe("uninstall — error cases", () => {
       stderrSpy.mock.calls.map((c) => c[0]).join("")
     ) as TfsError;
     expect(parsed.error).toBe("skill_not_found");
-    expect(parsed.hint).toContain("tfs list");
+    expect(parsed.hint).toContain("tfs installed");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

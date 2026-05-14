@@ -1,16 +1,16 @@
-import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { resolveRuntime, ALL_RUNTIMES, type Runtime } from "../lib/runtime.js";
-import { parseScope, resolveTargetPath } from "../lib/paths.js";
+import { resolveRuntime, type Runtime } from "../lib/runtime.js";
+import { parseScope, type Scope } from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
 import { detectOutdatedCached, staleMarkerLine } from "../lib/stale-check.js";
+import { readRegistry } from "../lib/registry.js";
+import { join } from "node:path";
 import type { TfsError } from "../types.js";
 
 interface InstalledSkill {
   name: string;
   version: string;
-  scope: "user" | "project";
+  scope: Scope;
   runtime: Runtime;
   path: string;
   outdated: boolean;
@@ -18,139 +18,98 @@ interface InstalledSkill {
 }
 
 /**
- * tfs installed: 列本地已装的 tranfu-skills.
+ * tfs installed: 列本地已装的 tranfu-skills, 跨 (runtime, scope) 默认聚合.
  *
- * 默认: 跨 runtime 扫所有探到的 runtime (user 不必传 --runtime).
- * 显式 --runtime → 只扫指定的.
- * 显式 --scope=project → 扫 git-root, 单 runtime 必传 --runtime
- *   (project scope 不跨 runtime, 因为 git-root/.<runtime>/skills 两个目录不一定都有意义).
- *
- * slice-3: 每条 skill 多 `outdated: boolean` 字段, text 行尾追 ` outdated`.
+ * 默认 (无 flag): 列 registry 所有 entry, 不再按 CWD 限 project scope.
+ * --runtime / --scope: 作为 filter 收窄结果 (零漂移 r1 单 scope 调用).
  */
 export async function installedCommand(opts: {
   scope?: string;
   runtime?: string;
   json?: boolean;
 }): Promise<void> {
-  let scope: ReturnType<typeof parseScope>;
+  // filter 解析: 显式时校验, 未传时不限定
+  let scopeFilter: Scope | undefined;
+  let runtimeFilter: Runtime | undefined;
   try {
-    scope = parseScope(opts.scope);
+    if (opts.scope !== undefined) scopeFilter = parseScope(opts.scope);
+    if (opts.runtime !== undefined) runtimeFilter = resolveRuntime(opts.runtime);
   } catch (e) {
     return emitError(e as TfsError);
   }
 
-  // 决定扫哪些 runtime:
-  // - 显式 --runtime → 单 runtime
-  // - 否则 user scope → 扫所有探到的 (跨 runtime); project scope → 强制需 --runtime (用 resolveRuntime)
-  let runtimes: Runtime[];
-  try {
-    if (opts.runtime !== undefined) {
-      runtimes = [resolveRuntime(opts.runtime)];
-    } else if (scope === "user") {
-      // user scope 无 --runtime: 扫所有探到的 runtime, 探不到也不报错 (列空)
-      const { detectAvailableRuntimes } = await import("../lib/runtime.js");
-      runtimes = detectAvailableRuntimes();
-      if (runtimes.length === 0) {
-        // 都没探到 → 退化为 ALL_RUNTIMES, 让 resolveTargetPath 后面给空列表
-        runtimes = ALL_RUNTIMES;
-      }
-    } else {
-      // project scope 无 --runtime → 强制走 resolveRuntime (会报 runtime_required 如多个/0 个)
-      runtimes = [resolveRuntime(opts.runtime)];
-    }
-  } catch (e) {
-    return emitError(e as TfsError);
-  }
+  // 拉 registry; lazy prune 已在 readRegistry 内部处理.
+  const entries = readRegistry().filter((e) => {
+    if (scopeFilter && e.scope !== scopeFilter) return false;
+    if (runtimeFilter && e.runtime !== runtimeFilter) return false;
+    return true;
+  });
 
-  // 先 detect outdated (silent on fail), 再 build installed list 时挂 outdated bool.
-  // 用 cache wrapper, slice-2 已落地; piggyback hint 复用同一份数据避免双 fetch.
+  // outdated 检测 (silent degrade)
   let outdatedSet = new Set<string>();
   try {
     const detection = await detectOutdatedCached();
     outdatedSet = new Set(
-      detection.skills
-        .filter((s) => s.status === "outdated")
-        .map((s) => s.name)
+      detection.skills.filter((s) => s.status === "outdated").map((s) => s.name)
     );
   } catch {
-    // silent degrade: detection 挂不影响 installed 主功能
+    // silent
   }
 
   const installed: InstalledSkill[] = [];
-
-  for (const runtime of runtimes) {
-    let dir: string;
-    try {
-      dir = resolveTargetPath({ runtime, scope });
-    } catch (e) {
-      // project scope 非 git repo → 直接报
-      return emitError(e as TfsError);
+  for (const e of entries) {
+    // 二次读 stamp 以确认 version 当前真值 (registry 可能 stale); 缺戳标 partial
+    const stamp = readStamp(join(e.path, "SKILL.md"));
+    let version = e.installed_version;
+    let stampStatus: "partial" | undefined;
+    if (stamp.status === "intact") {
+      version = stamp.data.installed_version;
+    } else if (stamp.status === "partial") {
+      version = stamp.partial.installed_version ?? "(missing)";
+      stampStatus = "partial";
     }
-
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      continue; // 目录不存在 (e.g. 没装过 codex 但探到 ~/.codex/ 不带 skills)
-    }
-
-    for (const name of entries) {
-      if (name.startsWith(".")) continue;
-      const skillDir = join(dir, name);
-      try {
-        if (!statSync(skillDir).isDirectory()) continue;
-      } catch { continue; }
-
-      const stamp = readStamp(join(skillDir, "SKILL.md"));
-      if (stamp.status === "absent") continue;
-
-      const version =
-        stamp.status === "intact"
-          ? stamp.data.installed_version
-          : stamp.partial.installed_version ?? "(missing)";
-
-      installed.push({
-        name,
-        version,
-        scope,
-        runtime,
-        path: skillDir,
-        outdated: outdatedSet.has(name),
-        ...(stamp.status === "partial" ? { status: "partial" } : {}),
-      });
-    }
+    installed.push({
+      name: e.name,
+      version,
+      scope: e.scope,
+      runtime: e.runtime,
+      path: e.path,
+      outdated: outdatedSet.has(e.name),
+      ...(stampStatus ? { status: stampStatus } : {}),
+    });
   }
 
-  // piggyback hint: 复用 outdatedSet, 不再调 getStaleHint (避免双 detect).
   const hint =
     outdatedSet.size > 0
-      ? {
-          outdated_count: outdatedSet.size,
-          names: Array.from(outdatedSet).sort(),
-        }
+      ? { outdated_count: outdatedSet.size, names: Array.from(outdatedSet).sort() }
       : null;
 
   if (opts.json) {
-    const payload: { installed: InstalledSkill[]; stale_hint?: { outdated_count: number; names: string[] } } = {
-      installed,
-    };
+    const payload: {
+      installed: InstalledSkill[];
+      stale_hint?: { outdated_count: number; names: string[] };
+    } = { installed };
     if (hint) payload.stale_hint = hint;
     process.stdout.write(JSON.stringify(payload) + "\n");
     return;
   }
 
   if (installed.length === 0) {
+    const filterDesc = [
+      runtimeFilter ? `runtime=${runtimeFilter}` : null,
+      scopeFilter ? `scope=${scopeFilter}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
     process.stdout.write(
-      `No tranfu-skills installed${runtimes.length === 1 ? ` (${runtimes[0]}, ${scope})` : ""}.\n`
+      `No tranfu-skills installed${filterDesc ? ` (${filterDesc})` : ""}.\n`
     );
     const marker = staleMarkerLine(hint);
     if (marker) process.stdout.write("\n" + marker);
     return;
   }
 
-  process.stdout.write(
-    `${installed.length} skill(s) installed:\n`
-  );
+  process.stdout.write(`${installed.length} skill(s) installed:\n`);
   const nameW = Math.max(...installed.map((s) => s.name.length));
   for (const s of installed) {
     const shortSha = s.version.slice(0, 7);

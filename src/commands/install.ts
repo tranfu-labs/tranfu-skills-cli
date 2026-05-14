@@ -6,6 +6,7 @@ import { parseScope, resolveTargetPath } from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
+import { addEntry } from "../lib/registry.js";
 import type { TfsError } from "../types.js";
 
 /** Type guard: 区分 lib throw 的 TfsError 与 fs/network 原生 Error */
@@ -92,11 +93,12 @@ export async function installCommand(
   }
 
   // 5. 下载 skill (staging + atomic rename, 失败 rollback) - 由 lib/skill-fetch 实现
+  const installedAt = new Date().toISOString().slice(0, 10);
   try {
     await downloadSkillToTarget(skill, target, targetDir, {
       installed_by: "tranfu-skills",
       installed_version: skill.sha,
-      installed_at: new Date().toISOString().slice(0, 10),
+      installed_at: installedAt,
       installed_source: skill.type,
     });
   } catch (e) {
@@ -111,7 +113,22 @@ export async function installCommand(
     });
   }
 
-  // 6. 成功输出 (V3 §8.1)
+  // 6. 写 registry (反向索引 cache; 失败不致命, silent degrade)
+  try {
+    const scope = parseScope(opts.scope);
+    addEntry({
+      name: skillName,
+      runtime,
+      scope,
+      path: targetDir,
+      installed_version: skill.sha,
+      installed_at: installedAt,
+    });
+  } catch {
+    // registry 写失败不影响 install 主功能, 下次 read 时 bootstrap 会重建
+  }
+
+  // 7. 成功输出 (V3 §8.1)
   const restartHint =
     runtime === "claude-code"
       ? "Restart Claude Code or open a new session to load this skill."

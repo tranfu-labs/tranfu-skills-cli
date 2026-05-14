@@ -40,17 +40,17 @@ program
 
 program
   .command("installed")
-  .description("列出本地已装的公司 skill (跨 runtime 扫 user 级, 默认无需 --runtime)")
-  .option("--scope <scope>", "user (默认) 或 project", "user")
-  .option("--runtime <runtime>", "claude-code 或 codex (user scope 不传则扫两个; project scope 必传)")
+  .description("列出本地已装的公司 skill (默认跨 runtime + scope 全列, 显式 flag 收窄)")
+  .option("--scope <scope>", "user 或 project (未传则不过滤, 全列)")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则不过滤, 全列)")
   .option("--json", "JSON 输出")
   .action(installedCommand);
 
 program
   .command("uninstall <skill>")
-  .description("卸载已装的公司 skill (仅删 tranfu-skills 装的)")
-  .option("--scope <scope>", "user (默认) 或 project", "user")
-  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .description("卸载已装的公司 skill (无 flag 时从 registry 查全部位置)")
+  .option("--scope <scope>", "user 或 project (未传则从 registry 查全部)")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则从 registry 查全部)")
   .action(uninstallCommand);
 
 program
