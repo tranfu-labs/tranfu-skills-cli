@@ -272,6 +272,104 @@ describe("update --self (Phase 5.1 仍工作)", () => {
   });
 });
 
+describe("update --ack-deletions (Phase 5.4)", () => {
+  it("无 --ack-deletions: deleted-upstream skill 输出 warn", async () => {
+    seedSkill("claude", "orphan", "any");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true });
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("deleted-upstream");
+    expect(out).toContain("orphan");
+    expect(out).toContain("--ack-deletions");
+  });
+
+  it("--ack-deletions: 写入 ack.json + status 升级 + 人话 ✓ acked", async () => {
+    seedSkill("claude", "orphan", "any");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, ackDeletions: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("✓ acked 1");
+    // ack.json 写了
+    const ackPath = join(tmpHome, ".tfs", "cache", "ack.json");
+    expect(existsSync(ackPath)).toBe(true);
+    const parsed = JSON.parse(readFileSync(ackPath, "utf8"));
+    expect(parsed.deleted_upstream).toEqual(["orphan"]);
+  });
+
+  it("已 ack 的 skill: 默认 update 不输出人话 warn", async () => {
+    seedSkill("claude", "orphan", "any");
+    // 预 seed ack.json
+    mkdirSync(join(tmpHome, ".tfs", "cache"), { recursive: true });
+    writeFileSync(
+      join(tmpHome, ".tfs", "cache", "ack.json"),
+      JSON.stringify({ deleted_upstream: ["orphan"] })
+    );
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).not.toContain("orphan"); // 已 ack, 人话静默
+    expect(out).not.toContain("deleted-upstream"); // warn 段不显示
+  });
+
+  it("已 ack 的 skill: --json 仍输出 status=deleted-upstream-acked", async () => {
+    seedSkill("claude", "orphan", "any");
+    mkdirSync(join(tmpHome, ".tfs", "cache"), { recursive: true });
+    writeFileSync(
+      join(tmpHome, ".tfs", "cache", "ack.json"),
+      JSON.stringify({ deleted_upstream: ["orphan"] })
+    );
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    const orphan = parsed.skills.find((s: any) => s.name === "orphan");
+    expect(orphan.status).toBe("deleted-upstream-acked");
+  });
+
+  it("--ack-deletions 合并已有 ack (不覆盖)", async () => {
+    seedSkill("claude", "new-orphan", "any");
+    // 已有 ack 包含一个不在 install 列表的 name (e.g. uninstall 过的旧记录)
+    mkdirSync(join(tmpHome, ".tfs", "cache"), { recursive: true });
+    writeFileSync(
+      join(tmpHome, ".tfs", "cache", "ack.json"),
+      JSON.stringify({ deleted_upstream: ["old-ack-name"] })
+    );
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await updateCommand({ skillsOnly: true, ackDeletions: true });
+
+    const parsed = JSON.parse(
+      readFileSync(join(tmpHome, ".tfs", "cache", "ack.json"), "utf8")
+    );
+    expect(parsed.deleted_upstream).toContain("new-orphan");
+    expect(parsed.deleted_upstream).toContain("old-ack-name"); // 旧的保留
+  });
+});
+
 describe("update — 错误路径", () => {
   it("installGlobalLatest 抛错 (default 路径) → internal_error exit 3", async () => {
     vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));

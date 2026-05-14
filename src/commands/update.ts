@@ -11,6 +11,7 @@ import {
   getRegistryLatest,
   installGlobalLatest,
 } from "../lib/npm.js";
+import { readAck, writeAck } from "../lib/ack.js";
 import type { SkillEntry, TfsError } from "../types.js";
 
 const PKG_NAME = "tranfu-skills";
@@ -25,7 +26,12 @@ interface SkillUpdateResult {
   name: string;
   from: string;
   to: string;
-  status: "updated" | "noop" | "deleted-upstream" | "failed";
+  status:
+    | "updated"
+    | "noop"
+    | "deleted-upstream"
+    | "deleted-upstream-acked"
+    | "failed";
   runtime: Runtime;
   error?: string;
 }
@@ -33,6 +39,7 @@ interface SkillUpdateResult {
 interface UpdateOpts {
   self?: boolean;
   skillsOnly?: boolean;
+  ackDeletions?: boolean;
   json?: boolean;
 }
 
@@ -62,6 +69,7 @@ async function doSelfUpdate(): Promise<SelfResult | null> {
 
 async function doSkillsUpdate(): Promise<SkillUpdateResult[]> {
   const index = await fetchIndex();
+  const ackedDeletions = readAck();
   const results: SkillUpdateResult[] = [];
 
   for (const runtime of ALL_RUNTIMES) {
@@ -104,7 +112,9 @@ async function doSkillsUpdate(): Promise<SkillUpdateResult[]> {
           name,
           from: installedVersion,
           to: installedVersion,
-          status: "deleted-upstream",
+          status: ackedDeletions.has(name)
+            ? "deleted-upstream-acked"
+            : "deleted-upstream",
           runtime,
         });
         continue;
@@ -181,6 +191,30 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
     } catch (e) {
       return emitError(e as TfsError);
     }
+
+    // --ack-deletions: 把当前所有 deleted-upstream (含已 acked) 的 name 写入 ack.json
+    if (opts.ackDeletions) {
+      const toAck = new Set<string>();
+      // 保留已 acked
+      for (const r of skillResults) {
+        if (
+          r.status === "deleted-upstream" ||
+          r.status === "deleted-upstream-acked"
+        ) {
+          toAck.add(r.name);
+        }
+      }
+      // 合并已有 ack (防止覆盖以前 ack 但当前 list 没扫到的 — e.g. uninstall 之后)
+      const existing = readAck();
+      for (const name of existing) toAck.add(name);
+      writeAck(toAck);
+      // 把新 ack 的 deleted-upstream 状态升级为 deleted-upstream-acked
+      for (const r of skillResults) {
+        if (r.status === "deleted-upstream") {
+          r.status = "deleted-upstream-acked";
+        }
+      }
+    }
   }
 
   // JSON 输出
@@ -199,6 +233,18 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
       }) + "\n"
     );
     return;
+  }
+
+  // --ack-deletions 跑了, 加一条 stdout 行 (人话模式)
+  if (opts.ackDeletions && !opts.json && doSkills) {
+    const acked = skillResults.filter(
+      (r) => r.status === "deleted-upstream-acked"
+    ).length;
+    if (acked > 0) {
+      process.stdout.write(
+        `✓ acked ${acked} deleted-upstream skill(s) (~/.tfs/cache/ack.json).\n`
+      );
+    }
   }
 
   // 人话输出
@@ -244,9 +290,10 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
           process.stdout.write(`  ${r.name} (${r.runtime})\n`);
         }
         process.stdout.write(
-          "  → Phase 5.4 加 --ack-deletions 静音此 warn; 当前可手动 tfs uninstall.\n"
+          "  → tfs update --ack-deletions 静音此 warn (skill 文件保留, 不删).\n"
         );
       }
+      // deleted-upstream-acked 在人话模式静默 (JSON 仍输出)
       if (failed.length) {
         process.stdout.write(`${failed.length} skill(s) failed to update:\n`);
         for (const r of failed) {
