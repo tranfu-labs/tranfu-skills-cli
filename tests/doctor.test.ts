@@ -247,3 +247,117 @@ describe("doctor CLI (commands/doctor.ts)", () => {
     expect(out).not.toContain("All checks passed");
   });
 });
+
+describe("doctor — slice-5 汇总 + --json", () => {
+  it("text 末尾追 '已装 N 个 skill' 行 (DoD-007)", async () => {
+    vi.doMock("../src/lib/doctor.js", () => ({
+      runDoctor: () => ({
+        checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
+        ok: true,
+      }),
+    }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockResolvedValue({
+        skills: [
+          { name: "a", from: "x", to: "x", status: "noop", runtime: "claude-code" },
+          { name: "b", from: "x", to: "y", status: "outdated", runtime: "claude-code" },
+        ],
+        checked_at: "2026-05-14T00:00:00Z",
+        cached: false,
+      }),
+    }));
+    const { doctorCommand } = await import("../src/commands/doctor.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await doctorCommand({});
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toMatch(/已装 2 个 skill, 1 个 outdated/);
+  });
+
+  it("text 0 outdated → 末尾不带 'outdated' 后半", async () => {
+    vi.doMock("../src/lib/doctor.js", () => ({
+      runDoctor: () => ({
+        checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
+        ok: true,
+      }),
+    }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockResolvedValue({
+        skills: [
+          { name: "a", from: "x", to: "x", status: "noop", runtime: "claude-code" },
+        ],
+        checked_at: "2026-05-14T00:00:00Z",
+        cached: false,
+      }),
+    }));
+    const { doctorCommand } = await import("../src/commands/doctor.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await doctorCommand({});
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toMatch(/已装 1 个 skill\n$/);
+    expect(out).not.toMatch(/outdated/);
+  });
+
+  it("--json 输出 {checks, ok, installed_count, outdated_count}", async () => {
+    vi.doMock("../src/lib/doctor.js", () => ({
+      runDoctor: () => ({
+        checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
+        ok: true,
+      }),
+    }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockResolvedValue({
+        skills: [
+          { name: "a", from: "x", to: "y", status: "outdated", runtime: "claude-code" },
+          { name: "b", from: "x", to: "x", status: "noop", runtime: "claude-code" },
+        ],
+        checked_at: "2026-05-14T00:00:00Z",
+        cached: false,
+      }),
+    }));
+    const { doctorCommand } = await import("../src/commands/doctor.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await doctorCommand({ json: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(out);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.installed_count).toBe(2);
+    expect(parsed.outdated_count).toBe(1);
+    expect(Array.isArray(parsed.checks)).toBe(true);
+  });
+
+  it("detection silent fail → installed/outdated count = 0, doctor still 跑完", async () => {
+    vi.doMock("../src/lib/doctor.js", () => ({
+      runDoctor: () => ({
+        checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
+        ok: true,
+      }),
+    }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockRejectedValue(new Error("network")),
+    }));
+    const { doctorCommand } = await import("../src/commands/doctor.js");
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await doctorCommand({ json: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(out);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.installed_count).toBe(0);
+    expect(parsed.outdated_count).toBe(0);
+  });
+});

@@ -63,6 +63,7 @@ program
 program
   .command("doctor")
   .description("诊断本机环境 (Node 版本 / runtime / PATH / 旧缓存)")
+  .option("--json", "JSON 输出")
   .action(doctorCommand);
 
 program
