@@ -352,10 +352,52 @@ installed_at: 2026-01-01
     expect(parsed.hint).toContain("--force");
   });
 
-  it("Phase 3.3: 有 intact 戳 + --force → 仍 skill_already_installed (3.5 才处理)", async () => {
+  it("Phase 3.5: intact 戳 + sha 一致 → noop (不重 fetch, 不重写, exit 0)", async () => {
+    // 只 mock 第一次 fetch (index), 后续不再 fetch (noop 不应触发文件 fetch)
     vi.stubGlobal(
       "fetch",
       mockFetchQueue([{ body: JSON.stringify(mockIndex) }])
+    );
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    mkdirSync(targetDir, { recursive: true });
+    const originalBody = `---
+name: auth-helper
+description: prev install
+installed_by: tranfu-skills
+installed_version: abc123
+installed_at: 2026-01-01
+installed_source: own
+---
+# untouched body
+`;
+    require("node:fs").writeFileSync(join(targetDir, "SKILL.md"), originalBody);
+
+    const { installCommand } = await loadInstallWithHome();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+    });
+
+    // 文件未被改写 (body 仍是 "# untouched body")
+    const md = readFileSync(join(targetDir, "SKILL.md"), "utf8");
+    expect(md).toBe(originalBody);
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("already up-to-date");
+    expect(out).toContain("abc123".slice(0, 7));
+  });
+
+  it("Phase 3.5: intact 戳 + sha 不一致 → update (直接覆盖, 不需 --force)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---\n# new body" },
+        { body: "new history\n" },
+      ])
     );
     const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
     mkdirSync(targetDir, { recursive: true });
@@ -363,34 +405,29 @@ installed_at: 2026-01-01
       join(targetDir, "SKILL.md"),
       `---
 name: auth-helper
-description: prev install
+description: old version
 installed_by: tranfu-skills
-installed_version: old-sha
+installed_version: OLD-SHA
 installed_at: 2026-01-01
 installed_source: own
 ---
+# old body
 `
     );
+
     const { installCommand } = await loadInstallWithHome();
-    const stderrSpy = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
-    captureExit();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    // 关键: 没传 --force, 仍能 update
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+    });
 
-    await expect(
-      installCommand("auth-helper", {
-        scope: "user",
-        runtime: "claude-code",
-        force: true,
-      })
-    ).rejects.toThrow("process.exit called");
-
-    const parsed = JSON.parse(
-      stderrSpy.mock.calls.map((c) => c[0]).join("")
-    ) as TfsError;
-    expect(parsed.error).toBe("skill_already_installed");
-    expect(parsed.message).toContain("stamp: intact");
-    expect(parsed.hint).toContain("3.5");  // 提示 update/noop 留 3.5
+    const md = readFileSync(join(targetDir, "SKILL.md"), "utf8");
+    expect(md).toContain("installed_version: abc123"); // 新 sha
+    expect(md).not.toContain("OLD-SHA");
+    expect(md).toContain("# new body");
+    expect(md).not.toContain("# old body");
   });
 
   it("Phase 3.3: renameSync 抛 plain Error → 走 internal_error (修 3.2 留的 cast bug)", async () => {
