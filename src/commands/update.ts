@@ -57,6 +57,20 @@ async function doSelfUpdate(): Promise<SelfResult | null> {
   const from = getGlobalVersion(PKG_NAME);
   const latest = getRegistryLatest(PKG_NAME);
 
+  // Phase 5.1 B1 fix: 两边都 null → 不盲目 install, 直接报 network_error
+  // (registry 不可达 或 包没发过, install 也救不了, 让用户先验环境)
+  if (from === null && latest === null) {
+    throw {
+      error: "network_error",
+      message: `无法读取本地 (npm list -g) 或 registry (npm view ${PKG_NAME} version) 的版本`,
+      hint:
+        "检查 npm 是否可用 (npm --version) + 网络; 或手动跑 npm install -g " +
+        PKG_NAME +
+        "@latest",
+      exit_code: 2,
+    };
+  }
+
   if (from && latest && from === latest) {
     return { from, to: from, status: "noop" };
   }
@@ -172,6 +186,10 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
     try {
       selfResult = await doSelfUpdate();
     } catch (err) {
+      // 区分 TfsError (e.g. B1 network_error) vs plain Error (npm install 抛错)
+      if (isTfsError(err)) {
+        return emitError(err);
+      }
       return emitError({
         error: "internal_error",
         message: `npm install -g ${PKG_NAME}@latest 失败: ${

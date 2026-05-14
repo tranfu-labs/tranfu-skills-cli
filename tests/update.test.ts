@@ -370,6 +370,34 @@ describe("update --ack-deletions (Phase 5.4)", () => {
   });
 });
 
+describe("update — B1 bug fix (registry+global 都 null)", () => {
+  it("两边都 null → network_error exit 2, 不盲目跑 npm install", async () => {
+    const installSpy = vi.fn();
+    const { updateCommand } = await loadUpdate({
+      getGlobalVersion: () => null,
+      getRegistryLatest: () => null,
+      installGlobalLatest: installSpy,
+    });
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(updateCommand({ self: true })).rejects.toThrow(
+      "process.exit called"
+    );
+
+    expect(installSpy).not.toHaveBeenCalled();
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("network_error");
+    expect(parsed.exit_code).toBe(2);
+    expect(parsed.hint).toContain("npm --version");
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+});
+
 describe("update — 错误路径", () => {
   it("installGlobalLatest 抛错 (default 路径) → internal_error exit 3", async () => {
     vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
