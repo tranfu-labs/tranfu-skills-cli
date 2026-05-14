@@ -207,3 +207,111 @@ describe("installed — 错误路径", () => {
     expect(parsed.error).toBe("runtime_invalid");
   });
 });
+
+describe("installed — slice-3 outdated 标记", () => {
+  function mockFetchOk(body: unknown) {
+    return vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: () => Promise.resolve(JSON.stringify(body)),
+    });
+  }
+
+  const indexWithFoo = {
+    version: 1 as const,
+    generated_at: "2026-05-14T00:00:00.000Z",
+    skills: [
+      {
+        name: "foo",
+        type: "own" as const,
+        description: "foo",
+        path: "own-skills/foo",
+        files: ["SKILL.md"],
+        sha: "new-foo-sha",
+      },
+    ],
+  };
+
+  it("--json: outdated:true when stamp sha != index sha", async () => {
+    seed("claude", "foo", intactFm("old-foo-sha"));
+    vi.stubGlobal("fetch", mockFetchOk(indexWithFoo));
+
+    const { installedCommand } = await loadInstalled();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installedCommand({ json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.installed[0]).toMatchObject({
+      name: "foo",
+      outdated: true,
+    });
+    expect(parsed.stale_hint).toEqual({
+      outdated_count: 1,
+      names: ["foo"],
+    });
+  });
+
+  it("--json: outdated:false when stamp sha == index sha", async () => {
+    seed("claude", "foo", intactFm("new-foo-sha"));
+    vi.stubGlobal("fetch", mockFetchOk(indexWithFoo));
+
+    const { installedCommand } = await loadInstalled();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installedCommand({ json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.installed[0]).toMatchObject({
+      name: "foo",
+      outdated: false,
+    });
+    expect(parsed.stale_hint).toBeUndefined(); // 0 outdated → absent (DoD-002)
+  });
+
+  it("text: outdated skill 行尾追 ' outdated', latest 行不追", async () => {
+    seed("claude", "foo", intactFm("old-foo-sha")); // outdated
+    seed("codex", "bar", intactFm("any-sha")); // 不在 index → deleted-upstream (not outdated)
+    vi.stubGlobal("fetch", mockFetchOk(indexWithFoo));
+
+    const { installedCommand } = await loadInstalled();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installedCommand({});
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    // foo 行 (outdated) 末尾追 ' outdated'
+    expect(out).toMatch(/foo\s+old-foo\s+claude-code\/user outdated\n/);
+    // bar 行 (deleted-upstream, not outdated) 不追
+    expect(out).toMatch(/bar\s+any-sha\s+codex\/user\n/);
+    expect(out).not.toMatch(/bar.*outdated/);
+  });
+
+  it("text: 0 outdated → 行末无 ' outdated' suffix (byte-equal 现行格式)", async () => {
+    seed("claude", "foo", intactFm("new-foo-sha")); // latest
+    vi.stubGlobal("fetch", mockFetchOk(indexWithFoo));
+
+    const { installedCommand } = await loadInstalled();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await installedCommand({});
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).not.toMatch(/outdated/);
+    // 主输出格式锁
+    expect(out).toMatchInlineSnapshot(`
+      "1 skill(s) installed:
+        foo  new-foo  claude-code/user
+      "
+    `);
+  });
+});

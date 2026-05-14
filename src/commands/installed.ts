@@ -4,7 +4,7 @@ import { resolveRuntime, ALL_RUNTIMES, type Runtime } from "../lib/runtime.js";
 import { parseScope, resolveTargetPath } from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
-import { getStaleHint, staleMarkerLine } from "../lib/stale-check.js";
+import { detectOutdatedCached, staleMarkerLine } from "../lib/stale-check.js";
 import type { TfsError } from "../types.js";
 
 interface InstalledSkill {
@@ -13,6 +13,7 @@ interface InstalledSkill {
   scope: "user" | "project";
   runtime: Runtime;
   path: string;
+  outdated: boolean;
   status?: "partial";
 }
 
@@ -23,6 +24,8 @@ interface InstalledSkill {
  * 显式 --runtime → 只扫指定的.
  * 显式 --scope=project → 扫 git-root, 单 runtime 必传 --runtime
  *   (project scope 不跨 runtime, 因为 git-root/.<runtime>/skills 两个目录不一定都有意义).
+ *
+ * slice-3: 每条 skill 多 `outdated: boolean` 字段, text 行尾追 ` outdated`.
  */
 export async function installedCommand(opts: {
   scope?: string;
@@ -57,6 +60,20 @@ export async function installedCommand(opts: {
     }
   } catch (e) {
     return emitError(e as TfsError);
+  }
+
+  // 先 detect outdated (silent on fail), 再 build installed list 时挂 outdated bool.
+  // 用 cache wrapper, slice-2 已落地; piggyback hint 复用同一份数据避免双 fetch.
+  let outdatedSet = new Set<string>();
+  try {
+    const detection = await detectOutdatedCached();
+    outdatedSet = new Set(
+      detection.skills
+        .filter((s) => s.status === "outdated")
+        .map((s) => s.name)
+    );
+  } catch {
+    // silent degrade: detection 挂不影响 installed 主功能
   }
 
   const installed: InstalledSkill[] = [];
@@ -98,12 +115,20 @@ export async function installedCommand(opts: {
         scope,
         runtime,
         path: skillDir,
+        outdated: outdatedSet.has(name),
         ...(stamp.status === "partial" ? { status: "partial" } : {}),
       });
     }
   }
 
-  const hint = await getStaleHint();
+  // piggyback hint: 复用 outdatedSet, 不再调 getStaleHint (避免双 detect).
+  const hint =
+    outdatedSet.size > 0
+      ? {
+          outdated_count: outdatedSet.size,
+          names: Array.from(outdatedSet).sort(),
+        }
+      : null;
 
   if (opts.json) {
     const payload: { installed: InstalledSkill[]; stale_hint?: { outdated_count: number; names: string[] } } = {
@@ -130,8 +155,9 @@ export async function installedCommand(opts: {
   for (const s of installed) {
     const shortSha = s.version.slice(0, 7);
     const partialMarker = s.status === "partial" ? " [partial]" : "";
+    const outdatedMarker = s.outdated ? " outdated" : "";
     process.stdout.write(
-      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${s.scope}${partialMarker}\n`
+      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${s.scope}${partialMarker}${outdatedMarker}\n`
     );
   }
   const marker = staleMarkerLine(hint);
