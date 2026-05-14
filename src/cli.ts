@@ -6,6 +6,7 @@ import { installedCommand } from "./commands/installed.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { updateCommand } from "./commands/update.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { initCommand } from "./commands/init.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -49,6 +50,12 @@ program
   .option("--scope <scope>", "user (默认) 或 project", "user")
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
   .action(uninstallCommand);
+
+program
+  .command("init")
+  .description("一次性 bootstrap: 装 tranfu-router + tranfu-publish meta-skill 到当前 runtime")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测; 多 runtime 时必传)")
+  .action(initCommand);
 
 program
   .command("doctor")
