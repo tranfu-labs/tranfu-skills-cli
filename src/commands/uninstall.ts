@@ -38,14 +38,25 @@ export async function uninstallCommand(
     });
   }
 
+  // 1 处 — TTY 确认 / 非 TTY 直删 (零漂移 r1 显式 flag 路径)
   if (entries.length === 1) {
     const e = entries[0]!;
+    if (process.stdout.isTTY) {
+      const { confirm } = await import("../lib/prompt.js");
+      const ok = await confirm(
+        `uninstall ${skillName} from ${e.path}  (${e.runtime}, ${e.scope})?`
+      );
+      if (!ok) {
+        process.stdout.write("cancelled.\n");
+        return;
+      }
+    }
     removeOne(e);
     process.stdout.write(`✓ uninstalled ${skillName} from ${e.path}\n`);
     return;
   }
 
-  // 多处装了同名 skill — TTY 让用户选, 非 TTY 报 ambiguous_target
+  // 多处装了同名 skill — TTY 让用户多选 + 确认, 非 TTY 报 ambiguous_target
   if (!process.stdout.isTTY) {
     const locations = entries
       .map((e, i) => `  ${i + 1}. ${e.path}  (${e.runtime}, ${e.scope})`)
@@ -65,18 +76,28 @@ async function promptAndRemove(
   skillName: string,
   entries: RegistryEntry[]
 ): Promise<void> {
-  const { selectFromList } = await import("../lib/prompt.js");
+  const { multiSelectFromList, confirm } = await import("../lib/prompt.js");
   const choices = entries.map((e) => `${e.path}  (${e.runtime}, ${e.scope})`);
-  const picked = await selectFromList({
+  const picked = await multiSelectFromList({
     question: `${skillName} 装在 ${entries.length} 处, 选要卸的:`,
     choices,
-    allowAll: true,
   });
   if (picked === "quit") {
     process.stdout.write("cancelled.\n");
     return;
   }
-  const targets = picked === "all" ? entries : [entries[picked]!];
+  const targets = picked.map((i) => entries[i]!);
+
+  process.stdout.write(`将卸载以下 ${targets.length} 处:\n`);
+  for (const t of targets) {
+    process.stdout.write(`  ${t.path}  (${t.runtime}, ${t.scope})\n`);
+  }
+  const ok = await confirm("确认卸载?");
+  if (!ok) {
+    process.stdout.write("cancelled.\n");
+    return;
+  }
+
   for (const t of targets) {
     removeOne(t);
     process.stdout.write(`✓ uninstalled ${skillName} from ${t.path}\n`);
