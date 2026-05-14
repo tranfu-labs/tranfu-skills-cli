@@ -26,8 +26,8 @@ program
 program
   .command("install <skill>")
   .description("装公司 skill 到本地")
-  .option("--scope <scope>", "user (默认) 或 project (git-root)", "user")
-  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .option("--scope <scope>", "user 或 project (TTY 未传则弹选, 非 TTY 默认 user)")
+  .option("--runtime <runtime>", "claude-code 或 codex (TTY 未传 + 双 runtime 弹选, 非 TTY 走探测)")
   .option("--force", "强制覆盖已存在的同名目录 (对 absent / partial 戳生效)")
   .action(installCommand);
 

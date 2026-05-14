@@ -1,13 +1,60 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fetchIndex } from "../lib/index-fetch.js";
-import { resolveRuntime } from "../lib/runtime.js";
-import { parseScope, resolveTargetPath } from "../lib/paths.js";
+import {
+  resolveRuntime,
+  detectAvailableRuntimes,
+  type Runtime,
+} from "../lib/runtime.js";
+import { parseScope, resolveTargetPath, type Scope } from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
 import { addEntry } from "../lib/registry.js";
+import { selectFromList, isInteractive } from "../lib/prompt.js";
 import type { TfsError } from "../types.js";
+
+export async function _resolveRuntimeInteractive(
+  explicit: string | undefined
+): Promise<Runtime> {
+  if (explicit !== undefined) return resolveRuntime(explicit);
+  const available = detectAvailableRuntimes();
+  if (available.length <= 1) return resolveRuntime(undefined);
+  if (!isInteractive()) return resolveRuntime(undefined);
+  const picked = await selectFromList({
+    question: `检测到 ${available.length} 个 runtime, 装到哪个?`,
+    choices: available,
+  });
+  if (picked === "quit" || picked === "all") {
+    throw {
+      error: "runtime_required",
+      message: "用户取消",
+      hint: "再次跑命令选择 runtime, 或显式 --runtime=claude-code|codex",
+      exit_code: 1,
+    };
+  }
+  return available[picked]!;
+}
+
+export async function _resolveScopeInteractive(
+  explicit: string | undefined
+): Promise<Scope> {
+  if (explicit !== undefined) return parseScope(explicit);
+  if (!isInteractive()) return parseScope(undefined); // 非 TTY 默认 user, 零漂移
+  const picked = await selectFromList({
+    question: "装到哪个 scope?",
+    choices: ["user (~/.claude or ~/.codex)", "project (git-root/.claude)"],
+  });
+  if (picked === "quit" || picked === "all") {
+    throw {
+      error: "scope_invalid",
+      message: "用户取消",
+      hint: "再次跑命令选择 scope, 或显式 --scope=user|project",
+      exit_code: 1,
+    };
+  }
+  return picked === 0 ? "user" : "project";
+}
 
 /** Type guard: 区分 lib throw 的 TfsError 与 fs/network 原生 Error */
 function isTfsError(e: unknown): e is TfsError {
@@ -24,12 +71,13 @@ export async function installCommand(
   skillName: string,
   opts: { scope?: string; runtime?: string; force?: boolean }
 ): Promise<void> {
-  // 1. 解析 runtime / scope / target
-  let runtime: ReturnType<typeof resolveRuntime>;
+  // 1. 解析 runtime / scope / target (TTY 交互, 非 TTY 走原 throw / 默认 user)
+  let runtime: Runtime;
+  let scope: Scope;
   let target: string;
   try {
-    runtime = resolveRuntime(opts.runtime);
-    const scope = parseScope(opts.scope);
+    runtime = await _resolveRuntimeInteractive(opts.runtime);
+    scope = await _resolveScopeInteractive(opts.scope);
     target = resolveTargetPath({ runtime, scope });
   } catch (e) {
     return emitError(e as TfsError);
@@ -115,7 +163,6 @@ export async function installCommand(
 
   // 6. 写 registry (反向索引 cache; 失败不致命, silent degrade)
   try {
-    const scope = parseScope(opts.scope);
     addEntry({
       name: skillName,
       runtime,
