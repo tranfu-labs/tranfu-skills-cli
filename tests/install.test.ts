@@ -299,7 +299,97 @@ describe("install — error cases", () => {
     cwdSpy.mockRestore();
   });
 
-  it("文件 fetch 网络错 → exit 2 network_error (Phase 3.1 留残骸, 3.2 rollback)", async () => {
+  it("Phase 3.2: 文件 fetch 中途失败 → staging 清理 + targetDir 不存在 + network_error", async () => {
+    let callIdx = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() => {
+        callIdx++;
+        if (callIdx === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            text: () => Promise.resolve(JSON.stringify(mockIndex)),
+          });
+        }
+        if (callIdx === 2) {
+          // SKILL.md fetch OK
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            text: () => Promise.resolve("---\nname: foo\n---"),
+          });
+        }
+        // 第 3 次 (HISTORY.md) 失败
+        return Promise.reject(new Error("ENETDOWN"));
+      })
+    );
+    const { installCommand } = await loadInstallWithHome();
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const exitSpy = captureExit();
+
+    await expect(
+      installCommand("auth-helper", { scope: "user", runtime: "claude-code" })
+    ).rejects.toThrow("process.exit called");
+
+    const targetDir = join(tmpHome, ".claude", "skills", "auth-helper");
+    const stagingDir = join(
+      tmpHome,
+      ".claude",
+      "skills",
+      ".tfs-staging",
+      "auth-helper"
+    );
+    expect(existsSync(targetDir)).toBe(false); // 关键: target 不被部分写入
+    expect(existsSync(stagingDir)).toBe(false); // staging 已清理
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("network_error");
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("Phase 3.2: 上次失败残留的 staging → 自动清理 + 重装成功", async () => {
+    // pre-seed 上次失败的 staging 残留
+    const skillsDir = join(tmpHome, ".claude", "skills");
+    mkdirSync(join(skillsDir, ".tfs-staging", "auth-helper", "junk"), {
+      recursive: true,
+    });
+    // 写一个垃圾文件确认残留确实存在
+    const junkFile = join(skillsDir, ".tfs-staging", "auth-helper", "junk", "stale.txt");
+    require("node:fs").writeFileSync(junkFile, "stale data");
+    expect(existsSync(junkFile)).toBe(true);
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetchQueue([
+        { body: JSON.stringify(mockIndex) },
+        { body: "---\nname: auth-helper\ndescription: foo\n---" },
+        { body: "history\n" },
+      ])
+    );
+    const { installCommand } = await loadInstallWithHome();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await installCommand("auth-helper", {
+      scope: "user",
+      runtime: "claude-code",
+    });
+
+    // 残留垃圾被清掉, 新安装成功
+    expect(existsSync(junkFile)).toBe(false);
+    expect(existsSync(join(skillsDir, "auth-helper", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skillsDir, ".tfs-staging", "auth-helper"))).toBe(
+      false
+    );  // staging rename 后已消失
+  });
+
+  it("文件 fetch 网络错 → exit 2 network_error (atomic: target 不存在)", async () => {
     let callIdx = 0;
     vi.stubGlobal(
       "fetch",

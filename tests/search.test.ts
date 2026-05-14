@@ -1,5 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IndexJson, SkillEntry } from "../src/types.js";
+
+// 把所有 fetchIndex 相关测试的 ~/.tfs/cache 重定向到 tmpdir, 防止
+// user 真实 cache (来自跑过 tfs search) 干扰 fetch mock (fetchIndex 命中 5min cache
+// 直接 return, mock fetch 不被调用 → 测试用真实 cache data 而非 mock data).
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = join(
+    tmpdir(),
+    `search-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  mkdirSync(tmpHome, { recursive: true });
+  vi.resetModules();
+  vi.doMock("node:os", async () => {
+    const actual = await vi.importActual<typeof import("node:os")>("node:os");
+    return { ...actual, homedir: () => tmpHome };
+  });
+});
+
+afterEach(() => {
+  vi.doUnmock("node:os");
+  try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
+});
 
 // ----- fixture data -----
 const authSkill: SkillEntry = {

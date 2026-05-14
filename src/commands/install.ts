@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fetchIndex } from "../lib/index-fetch.js";
 import { resolveRuntime } from "../lib/runtime.js";
@@ -87,30 +87,42 @@ export async function installCommand(
     });
   }
 
-  // 5. mkdir + 拉每个文件 + 写盘 (Phase 3.1 不 staging, 失败留残骸, 3.2 加 atomic)
+  // 5. Phase 3.2: staging + atomic rename
+  // 先写到 <target>/.tfs-staging/<skill>/, 全部成功后 renameSync 到 <target>/<skill>/.
+  // 任何一步失败 → rmSync 清理 staging, 不留残骸, targetDir 永远不被部分写入.
+  const stagingDir = join(target, ".tfs-staging", skillName);
+  // 上次失败可能残留 staging, 先清理
+  if (existsSync(stagingDir)) {
+    rmSync(stagingDir, { recursive: true, force: true });
+  }
+
   try {
-    mkdirSync(targetDir, { recursive: true });
+    mkdirSync(stagingDir, { recursive: true });
     for (const relFile of skill.files) {
       const url = `${RAW_BASE}/${skill.path}/${relFile}`;
       const content = await fetchFile(url);
-      const filePath = join(targetDir, relFile);
+      const filePath = join(stagingDir, relFile);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, content, "utf8");
     }
+
+    // 写 stamp 到 staging 的 SKILL.md (rename 时一起带过去)
+    writeStamp(join(stagingDir, "SKILL.md"), {
+      installed_by: "tranfu-skills",
+      installed_version: skill.sha,
+      installed_at: new Date().toISOString().slice(0, 10),
+      installed_source: skill.type,
+    });
+
+    // atomic rename: staging → target (同文件系统下原子)
+    renameSync(stagingDir, targetDir);
   } catch (e) {
+    // rollback: 清理 staging
+    try { rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
     return emitError(e as TfsError);
   }
 
-  // 6. 写 stamp 到 SKILL.md (writeStamp 会保留原 frontmatter + 加 installed_* 字段)
-  const skillMdPath = join(targetDir, "SKILL.md");
-  writeStamp(skillMdPath, {
-    installed_by: "tranfu-skills",
-    installed_version: skill.sha,
-    installed_at: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
-    installed_source: skill.type,
-  });
-
-  // 7. 成功输出 (V3 §8.1)
+  // 6. 成功输出 (V3 §8.1)
   const restartHint =
     runtime === "claude-code"
       ? "Restart Claude Code or open a new session to load this skill."
