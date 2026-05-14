@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { IndexJson, TfsError } from "../src/types.js";
 
 let tmpHome: string;
 
 beforeEach(() => {
   tmpHome = join(
     tmpdir(),
-    `list-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    `list-r2-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
-  mkdirSync(tmpHome, { recursive: true });
+  mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -26,56 +26,19 @@ afterEach(() => {
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-const mockIndex: IndexJson = {
-  version: 1,
-  generated_at: "2026-05-14T00:00:00.000Z",
-  skills: [
-    {
-      name: "auth-helper",
-      type: "own",
-      description: "OAuth2 帮手",
-      path: "own-skills/auth-helper",
-      files: ["SKILL.md"],
-      sha: "abc",
-    },
-    {
-      name: "deploy-pipeline",
-      type: "own",
-      description: "CI/CD 部署",
-      path: "own-skills/deploy-pipeline",
-      files: ["SKILL.md"],
-      sha: "def",
-    },
-    {
-      name: "karpathy-llm",
-      type: "external",
-      description: "LLM coding guidelines",
-      path: "external-skills/karpathy-llm",
-      files: ["SKILL.md"],
-      sha: "ghi",
-      source_url: "https://github.com/example/karpathy-llm",
-    },
-  ],
-};
-
-function mockFetchIndex(body: unknown) {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    headers: { get: () => null },
-    text: () => Promise.resolve(JSON.stringify(body)),
-  });
+function seedClaudeStamped(name: string, sha: string) {
+  const dir = join(tmpHome, ".claude", "skills", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: x\ninstalled_by: tranfu-skills\ninstalled_version: ${sha}\ninstalled_at: 2026-05-14\ninstalled_source: own\n---\n# body\n`
+  );
+  return dir;
 }
 
-function captureExit() {
-  return vi.spyOn(process, "exit").mockImplementation((() => {
-    throw new Error("process.exit called");
-  }) as never);
-}
-
-describe("list — 列远端公司库全部 skill", () => {
-  it("默认输出: 全部 skill, 按 type 标注", async () => {
-    vi.stubGlobal("fetch", mockFetchIndex(mockIndex));
+describe("list (r2 命名重构) — 默认 = 本地 installed alias", () => {
+  it("无 flag → 列本地已装 skill (= tfs installed)", async () => {
+    seedClaudeStamped("foo", "abc1234");
     const { listCommand } = await import("../src/commands/list.js");
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
@@ -84,16 +47,13 @@ describe("list — 列远端公司库全部 skill", () => {
     await listCommand({});
 
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toContain("3 skill(s) in tranfu-skills");
-    expect(out).toContain("auth-helper");
-    expect(out).toContain("deploy-pipeline");
-    expect(out).toContain("karpathy-llm");
-    expect(out).toContain("own");
-    expect(out).toContain("external");
+    expect(out).toContain("1 skill(s) installed");
+    expect(out).toContain("foo");
+    expect(out).not.toContain("Remote index");
   });
 
-  it("--json 完整 schema (含 source_url for external)", async () => {
-    vi.stubGlobal("fetch", mockFetchIndex(mockIndex));
+  it("--json → 与 installed --json schema 等价", async () => {
+    seedClaudeStamped("foo", "abc1234");
     const { listCommand } = await import("../src/commands/list.js");
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
@@ -102,63 +62,44 @@ describe("list — 列远端公司库全部 skill", () => {
     await listCommand({ json: true });
 
     const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
-    expect(parsed.total).toBe(3);
-    expect(parsed.results).toHaveLength(3);
-    const external = parsed.results.find(
-      (r: any) => r.name === "karpathy-llm"
-    );
-    expect(external.source_url).toBe("https://github.com/example/karpathy-llm");
-    const own = parsed.results.find((r: any) => r.name === "auth-helper");
-    expect(own.source_url).toBeUndefined();  // own skill 不带 source_url
+    expect(parsed.installed).toBeDefined();
+    expect(parsed.installed).toHaveLength(1);
+    expect(parsed.installed[0].name).toBe("foo");
+    expect(parsed.installed[0].runtime).toBe("claude-code");
+    expect(parsed.installed[0].scope).toBe("user");
   });
+});
 
-  it("空 index → 'Remote index is empty.'", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockFetchIndex({ ...mockIndex, skills: [] })
-    );
-    const { listCommand } = await import("../src/commands/list.js");
-    const stdoutSpy = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-
-    await listCommand({});
-
-    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toContain("Remote index is empty");
-  });
-
-  it("fetch 404 → exit 1 index_not_initialized", async () => {
+describe("list --remote (deprecated) — 转发到 catalog", () => {
+  it("--remote 触发 stderr deprecation warning + 跑 catalog 行为", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
+        ok: true,
+        status: 200,
         headers: { get: () => null },
-        text: () => Promise.resolve(""),
+        text: () => Promise.resolve(JSON.stringify({
+          version: 1,
+          generated_at: "2026-05-14T00:00:00Z",
+          skills: [{ name: "x", type: "own", description: "d", path: "p", files: ["SKILL.md"], sha: "abc" }],
+        })),
       })
     );
     const { listCommand } = await import("../src/commands/list.js");
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
-    const exitSpy = captureExit();
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
 
-    await expect(listCommand({})).rejects.toThrow("process.exit called");
-    const parsed = JSON.parse(
-      stderrSpy.mock.calls.map((c) => c[0]).join("")
-    ) as TfsError;
-    expect(parsed.error).toBe("index_not_initialized");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
+    await listCommand({ remote: true });
 
-  it("没有 runtime/scope 选项 — list 跟本地状态完全无关", async () => {
-    vi.stubGlobal("fetch", mockFetchIndex(mockIndex));
-    const { listCommand } = await import("../src/commands/list.js");
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(stderr).toContain("deprecated");
+    expect(stderr).toContain("tfs catalog");
 
-    // 关键: 不传任何 --runtime / --scope, 也不该报 runtime_required
-    await listCommand({});
-    // 跑通 = pass
+    const stdout = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(stdout).toContain("1 skill(s) in tranfu-skills");
   });
 });

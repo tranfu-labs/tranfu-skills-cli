@@ -2,6 +2,7 @@ import { program, CommanderError } from "commander";
 import { searchCommand } from "./commands/search.js";
 import { installCommand } from "./commands/install.js";
 import { listCommand } from "./commands/list.js";
+import { catalogCommand } from "./commands/catalog.js";
 import { installedCommand } from "./commands/installed.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { updateCommand } from "./commands/update.js";
@@ -33,10 +34,19 @@ program
 
 program
   .command("list")
-  .description("列出公司库 (远端) 全部 skill")
+  .description("列出本地已装的公司 skill (alias for tfs installed; --remote 切到远端 catalog, deprecated)")
   .option("--json", "JSON 输出")
-  .option("--runtime <runtime>", "(忽略, 远端 list 与本地 runtime 无关; 接受 flag 让 router 一致)")
+  .option("--scope <scope>", "user 或 project (未传则不过滤)")
+  .option("--runtime <runtime>", "claude-code 或 codex (未传则不过滤)")
+  .option("--remote", "[deprecated] 改用 tfs catalog: 列远端公司库 index")
   .action(listCommand);
+
+program
+  .command("catalog")
+  .description("列出公司库 (远端) 全部 skill (新命名: 旧 tfs list 行为)")
+  .option("--json", "JSON 输出")
+  .option("--runtime <runtime>", "(忽略, 远端 catalog 与本地 runtime 无关; 接受 flag 让 router 一致)")
+  .action(catalogCommand);
 
 program
   .command("installed")
