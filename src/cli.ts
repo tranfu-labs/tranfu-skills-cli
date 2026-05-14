@@ -71,6 +71,7 @@ program
   .option("--self", "仅升级 CLI 自身 (npm install -g)")
   .option("--skills-only", "仅升级已装 skill")
   .option("--ack-deletions", "把当前 deleted-upstream 的 skill 写入 ack.json, 静默后续 warn")
+  .option("--check-only", "仅检测哪些 skill 可更新, 不动文件 (与 --self / --ack-deletions 互斥)")
   .option("--json", "JSON 输出")
   .action(updateCommand);
 

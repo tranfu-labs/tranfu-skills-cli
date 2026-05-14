@@ -448,3 +448,212 @@ describe("update — 错误路径", () => {
     expect(parsed.error).toBe("index_not_initialized");
   });
 });
+
+describe("update --check-only (Phase 1 slice-1)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns skills with status='outdated' when stamp sha != index sha", async () => {
+    seedSkill("claude", "skill-a", "old-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.self).toBeNull();
+    expect(parsed.skills).toHaveLength(1);
+    expect(parsed.skills[0]).toMatchObject({
+      name: "skill-a",
+      status: "outdated",
+      from: "old-sha-a",
+      to: "new-sha-a",
+      runtime: "claude-code",
+    });
+    expect(parsed.cached).toBe(false);
+    expect(parsed.checked_at).toBe("2026-05-14T00:00:00Z");
+  });
+
+  it("returns empty skills[] when all stamps match (noop excluded from output)", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    seedSkill("codex", "skill-b", "current-sha-b");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.skills).toEqual([]);
+  });
+
+  it("includes deleted-upstream with status='deleted-upstream', no standalone field", async () => {
+    seedSkill("claude", "orphan-skill", "any-sha");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.skills).toHaveLength(1);
+    expect(parsed.skills[0]).toMatchObject({
+      name: "orphan-skill",
+      status: "deleted-upstream",
+    });
+    expect((parsed as { deleted_upstream?: unknown }).deleted_upstream).toBeUndefined();
+  });
+
+  it("anti-DoD: file on disk untouched after --check-only run", async () => {
+    const skillDir = seedSkill("claude", "skill-a", "old-sha-a"); // outdated
+    const skillMdPath = join(skillDir, "SKILL.md");
+    const before = readFileSync(skillMdPath, "utf8");
+    const fetchSpy = mockFetchSequence(baseIndex, []);
+    vi.stubGlobal("fetch", fetchSpy);
+    const { updateCommand } = await loadUpdate({});
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, json: true });
+
+    // 黑盒断言: 文件还在 + stamp 字节级未变 (rmSync / downloadSkillToTarget 都没跑)
+    expect(existsSync(skillMdPath)).toBe(true);
+    expect(readFileSync(skillMdPath, "utf8")).toBe(before);
+    // 网络只打了 1 次 (fetchIndex), 没拉 skill 文件
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("--check-only --json output schema locked (0 outdated)", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, json: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toMatchInlineSnapshot(`
+      "{"self":null,"skills":[],"checked_at":"2026-05-14T00:00:00Z","cached":false}
+      "
+    `);
+  });
+
+  it("--check-only text mode 0 outdated → stdout empty", async () => {
+    seedSkill("claude", "skill-a", "new-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true });
+
+    expect(stdoutSpy.mock.calls.map((c) => c[0]).join("")).toBe("");
+  });
+
+  it("--check-only text mode N outdated → locked format, no ⚠ prefix", async () => {
+    seedSkill("claude", "skill-a", "old-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true });
+
+    const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toMatchInlineSnapshot(`
+      "发现 1 个 skill 可更新:
+        - skill-a: old-sha..new-sha (claude-code)
+      "
+    `);
+    // slice-2 piggyback marker prefix 隔离 — slice-1 text 输出禁出现 ⚠
+    expect(out.startsWith("⚠")).toBe(false);
+    expect(out.split("\n").some((line) => line.startsWith("⚠"))).toBe(false);
+  });
+
+  it("--check-only --self → invalid_args exit 1", async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { updateCommand } = await loadUpdate({});
+    captureExit();
+
+    await expect(
+      updateCommand({ checkOnly: true, self: true })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("invalid_args");
+    expect(parsed.exit_code).toBe(1);
+  });
+
+  it("--check-only --ack-deletions → invalid_args exit 1", async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { updateCommand } = await loadUpdate({});
+    captureExit();
+
+    await expect(
+      updateCommand({ checkOnly: true, ackDeletions: true })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("invalid_args");
+  });
+
+  it("--check-only --skills-only → behaves same as --check-only alone (noop combo)", async () => {
+    seedSkill("claude", "skill-a", "old-sha-a");
+    vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
+    const { updateCommand } = await loadUpdate({});
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+
+    await updateCommand({ checkOnly: true, skillsOnly: true, json: true });
+
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed.self).toBeNull();
+    expect(parsed.skills).toHaveLength(1);
+    expect(parsed.skills[0].status).toBe("outdated");
+  });
+
+  it("network failure → emitError exit 2 with error='index_fetch_failed'", async () => {
+    seedSkill("claude", "skill-a", "old-sha-a");
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("network unreachable")));
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { updateCommand } = await loadUpdate({});
+    captureExit();
+
+    await expect(
+      updateCommand({ checkOnly: true, json: true })
+    ).rejects.toThrow("process.exit called");
+
+    const parsed = JSON.parse(
+      stderrSpy.mock.calls.map((c) => c[0]).join("")
+    ) as TfsError;
+    expect(parsed.error).toBe("index_fetch_failed");
+    expect(parsed.exit_code).toBe(2);
+  });
+});

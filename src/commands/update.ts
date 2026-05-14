@@ -1,9 +1,6 @@
-import { readdirSync, statSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { fetchIndex } from "../lib/index-fetch.js";
-import { ALL_RUNTIMES, type Runtime } from "../lib/runtime.js";
 import { resolveTargetPath } from "../lib/paths.js";
-import { readStamp } from "../lib/stamp.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
 import {
@@ -12,7 +9,9 @@ import {
   installGlobalLatest,
 } from "../lib/npm.js";
 import { readAck, writeAck } from "../lib/ack.js";
-import type { SkillEntry, TfsError } from "../types.js";
+import { detectOutdated } from "../lib/stale-check.js";
+import { fetchIndex } from "../lib/index-fetch.js";
+import type { SkillEntry, SkillUpdateResult, TfsError } from "../types.js";
 
 const PKG_NAME = "tranfu-skills";
 
@@ -22,25 +21,12 @@ interface SelfResult {
   status?: "noop";
 }
 
-interface SkillUpdateResult {
-  name: string;
-  from: string;
-  to: string;
-  status:
-    | "updated"
-    | "noop"
-    | "deleted-upstream"
-    | "deleted-upstream-acked"
-    | "failed";
-  runtime: Runtime;
-  error?: string;
-}
-
 interface UpdateOpts {
   self?: boolean;
   skillsOnly?: boolean;
   ackDeletions?: boolean;
   json?: boolean;
+  checkOnly?: boolean;
 }
 
 function isTfsError(e: unknown): e is TfsError {
@@ -82,101 +68,111 @@ async function doSelfUpdate(): Promise<SelfResult | null> {
 }
 
 async function doSkillsUpdate(): Promise<SkillUpdateResult[]> {
+  const detection = await detectOutdated();
+  // mutation path 仍需要 indexEntry 拿 path/files/source_url; 二次拉 index (有 disk cache).
   const index = await fetchIndex();
-  const ackedDeletions = readAck();
   const results: SkillUpdateResult[] = [];
 
-  for (const runtime of ALL_RUNTIMES) {
+  for (const r of detection.skills) {
+    if (r.status !== "outdated") {
+      results.push(r);
+      continue;
+    }
+    // outdated → 重装
+    const indexEntry = index.skills.find((s: SkillEntry) => s.name === r.name);
+    if (!indexEntry) {
+      // 极端 race: detect 后 index 又变了 — 标 failed
+      results.push({ ...r, status: "failed", error: "index entry vanished" });
+      continue;
+    }
     let dir: string;
     try {
-      dir = resolveTargetPath({ runtime, scope: "user" });
-    } catch {
+      dir = resolveTargetPath({ runtime: r.runtime, scope: "user" });
+    } catch (e) {
+      results.push({ ...r, status: "failed", error: String(e) });
       continue;
     }
-
-    let entries: string[];
+    const skillDir = join(dir, r.name);
     try {
-      entries = readdirSync(dir);
-    } catch {
-      continue;
-    }
-
-    for (const name of entries) {
-      if (name.startsWith(".")) continue;
-      const skillDir = join(dir, name);
-      try {
-        if (!statSync(skillDir).isDirectory()) continue;
-      } catch {
-        continue;
-      }
-
-      const stamp = readStamp(join(skillDir, "SKILL.md"));
-      if (stamp.status === "absent") continue;
-
-      const installedVersion =
-        stamp.status === "intact"
-          ? stamp.data.installed_version
-          : stamp.partial.installed_version ?? "";
-
-      const indexEntry = index.skills.find(
-        (s: SkillEntry) => s.name === name
-      );
-      if (!indexEntry) {
-        results.push({
-          name,
-          from: installedVersion,
-          to: installedVersion,
-          status: ackedDeletions.has(name)
-            ? "deleted-upstream-acked"
-            : "deleted-upstream",
-          runtime,
-        });
-        continue;
-      }
-
-      if (indexEntry.sha === installedVersion) {
-        results.push({
-          name,
-          from: installedVersion,
-          to: installedVersion,
-          status: "noop",
-          runtime,
-        });
-        continue;
-      }
-
-      // sha 不一致 → 更新 (rm 旧 + downloadSkillToTarget)
-      try {
-        rmSync(skillDir, { recursive: true, force: true });
-        await downloadSkillToTarget(indexEntry, dir, skillDir, {
-          installed_by: "tranfu-skills",
-          installed_version: indexEntry.sha,
-          installed_at: new Date().toISOString().slice(0, 10),
-          installed_source: indexEntry.type,
-        });
-        results.push({
-          name,
-          from: installedVersion,
-          to: indexEntry.sha,
-          status: "updated",
-          runtime,
-        });
-      } catch (e) {
-        results.push({
-          name,
-          from: installedVersion,
-          to: indexEntry.sha,
-          status: "failed",
-          runtime,
-          error: isTfsError(e) ? e.message : String(e),
-        });
-      }
+      rmSync(skillDir, { recursive: true, force: true });
+      await downloadSkillToTarget(indexEntry, dir, skillDir, {
+        installed_by: "tranfu-skills",
+        installed_version: indexEntry.sha,
+        installed_at: new Date().toISOString().slice(0, 10),
+        installed_source: indexEntry.type,
+      });
+      results.push({ ...r, status: "updated" });
+    } catch (e) {
+      results.push({
+        ...r,
+        status: "failed",
+        error: isTfsError(e) ? e.message : String(e),
+      });
     }
   }
   return results;
 }
 
 export async function updateCommand(opts: UpdateOpts): Promise<void> {
+  // --check-only 早出: 仅检测, 不 mutate. 与 --self / --ack-deletions 互斥.
+  if (opts.checkOnly) {
+    if (opts.self) {
+      return emitError({
+        error: "invalid_args",
+        message: "--check-only 与 --self 互斥 (check-only 不升 CLI)",
+        hint: "去掉 --self 或换用 --check-only --skills-only",
+        exit_code: 1,
+      });
+    }
+    if (opts.ackDeletions) {
+      return emitError({
+        error: "invalid_args",
+        message: "--check-only 与 --ack-deletions 互斥 (check-only 是只读)",
+        hint: "去掉 --ack-deletions 或单跑 tfs update --ack-deletions",
+        exit_code: 1,
+      });
+    }
+    let detection: { skills: SkillUpdateResult[]; checked_at: string; cached: boolean };
+    try {
+      detection = await detectOutdated();
+    } catch (e) {
+      const underlying = isTfsError(e)
+        ? e.message
+        : e instanceof Error
+        ? e.message
+        : String(e);
+      return emitError({
+        error: "index_fetch_failed",
+        message: `读取远端 index 失败: ${underlying}`,
+        hint: "检查网络 / GH_TOKEN; 或稍后重试",
+        exit_code: 2,
+      });
+    }
+    // 输出层过滤: --check-only 的 skills[] 仅含 outdated / deleted-upstream*; noop 不入数组.
+    const filtered = detection.skills.filter((s) => s.status !== "noop");
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify({
+          self: null,
+          skills: filtered,
+          checked_at: detection.checked_at,
+          cached: detection.cached,
+        }) + "\n"
+      );
+      return;
+    }
+    // 文本模式
+    const outdated = filtered.filter((s) => s.status === "outdated");
+    if (outdated.length === 0) return; // 0 outdated → 空 stdout
+    process.stdout.write(`发现 ${outdated.length} 个 skill 可更新:\n`);
+    for (const s of outdated) {
+      process.stdout.write(
+        `  - ${s.name}: ${s.from.slice(0, 7)}..${s.to.slice(0, 7)} (${s.runtime})\n`
+      );
+    }
+    return;
+  }
+
   // 默认 = both; --self = self only; --skills-only = skills only
   const doSelf = opts.skillsOnly !== true;
   const doSkills = opts.self !== true;

@@ -1,3 +1,5 @@
+import type { Runtime } from "./lib/runtime.js";
+
 export type SkillType = "meta" | "own" | "external";
 
 export interface SkillEntry {
@@ -21,4 +23,19 @@ export interface TfsError {
   message: string;
   hint?: string;
   exit_code: 1 | 2 | 3;
+}
+
+export interface SkillUpdateResult {
+  name: string;
+  from: string;
+  to: string;
+  status:
+    | "updated"
+    | "noop"
+    | "outdated"
+    | "deleted-upstream"
+    | "deleted-upstream-acked"
+    | "failed";
+  runtime: Runtime;
+  error?: string;
 }
