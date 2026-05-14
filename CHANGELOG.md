@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.0] - 2026-05-14
+
+跨 location uninstall + TTY 交互 + list 命名重构. 用户 same-day pushback 触发 r2 iteration.
+
+### Added
+- `~/.tfs/installed.json` — install registry 反向索引 cache (name → locations). `install` 写, `uninstall` 删, `installed` 读. 首读 bootstrap 从 4 个已知 (runtime, scope) 组合扫 stamp 重建. lazy prune: 读时 path 不存在的 entry 自动剔除并回写.
+- `tfs uninstall <name>` 无 flag 时跨 location 查找:
+  - 0 处 → `skill_not_found`
+  - 1 处 → TTY confirm (y/N) / 非 TTY 直删
+  - ≥2 处 → TTY multi-select (1,3 / 1 3 / a / q) + 二次 confirm / 非 TTY `ambiguous_target` 列位置
+- `tfs install` 双 runtime + 无 `--runtime` 时 TTY 弹 select; 非 TTY 走原 `runtime_required` throw (零漂移)
+- `tfs install` 无 `--scope` 时 TTY 弹 select (user/project); 非 TTY 默认 user (零漂移)
+- `tfs catalog` 新命令 — 旧 `tfs list` 行为 (列远端公司库 index)
+- `src/lib/registry.ts` — `readRegistry()` / `addEntry()` / `removeEntryByPath()` / `findByName()` / bootstrap 接口
+- `src/lib/prompt.ts` — 零依赖 TTY prompts: `selectFromList()` / `multiSelectFromList()` / `confirm()` / `isInteractive()`
+
+### Changed
+- `tfs list` 默认行为 — 从 "远端 catalog" 改为 "本地 installed" (与 npm/pip/brew 惯例一致). `--remote` flag 触发 stderr deprecation warning + 转发到 catalog
+- `tfs uninstall` hint 文案 — `"跑 tfs list 看已装"` → `"跑 tfs installed 看已装"`
+- `tfs installed` 默认 — 从 "单 (runtime, scope)" 改为 "跨所有 (runtime, scope) 通过 registry 列". `--runtime` / `--scope` 作 filter (零漂移显式调用)
+- cli.ts: `install` / `installed` / `uninstall` 去掉 `--scope` 默认值 `"user"`, 让 undefined 走交互/registry 路径
+
+### Tests
+- 179 → 210 (+31, 0 regression)
+- 新增: `tests/registry.test.ts` (8) / `tests/install-interactive.test.ts` (10) / `tests/uninstall-interactive.test.ts` (6) / `tests/catalog.test.ts` (5, 接管旧 list cases)
+- 重写: `tests/list.test.ts` (5 → 3 新 case 覆盖 alias + deprecation)
+- 扩充: `tests/uninstall.test.ts` (+4 registry-driven cases)
+
 ## [0.2.0] - 2026-05-14
 
 无痛更新 + 体验升级. 基于现有功能与角色叠加, 不新增命令, stamp schema 不变.
