@@ -5,6 +5,7 @@ import { listCommand } from "./commands/list.js";
 import { installedCommand } from "./commands/installed.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { updateCommand } from "./commands/update.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -48,6 +49,11 @@ program
   .option("--scope <scope>", "user (默认) 或 project", "user")
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
   .action(uninstallCommand);
+
+program
+  .command("doctor")
+  .description("诊断本机环境 (Node 版本 / runtime / PATH / 旧缓存)")
+  .action(doctorCommand);
 
 program
   .command("update")
