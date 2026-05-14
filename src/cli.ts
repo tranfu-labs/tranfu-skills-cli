@@ -2,7 +2,9 @@ import { program, CommanderError } from "commander";
 import { searchCommand } from "./commands/search.js";
 import { installCommand } from "./commands/install.js";
 import { listCommand } from "./commands/list.js";
+import { installedCommand } from "./commands/installed.js";
 import { uninstallCommand } from "./commands/uninstall.js";
+import { updateCommand } from "./commands/update.js";
 import { emitError } from "./lib/errors.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -28,11 +30,17 @@ program
 
 program
   .command("list")
-  .description("列出已装的公司 skill")
-  .option("--scope <scope>", "user (默认) 或 project", "user")
-  .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
+  .description("列出公司库 (远端) 全部 skill")
   .option("--json", "JSON 输出")
   .action(listCommand);
+
+program
+  .command("installed")
+  .description("列出本地已装的公司 skill (跨 runtime 扫 user 级, 默认无需 --runtime)")
+  .option("--scope <scope>", "user (默认) 或 project", "user")
+  .option("--runtime <runtime>", "claude-code 或 codex (user scope 不传则扫两个; project scope 必传)")
+  .option("--json", "JSON 输出")
+  .action(installedCommand);
 
 program
   .command("uninstall <skill>")
@@ -40,6 +48,14 @@ program
   .option("--scope <scope>", "user (默认) 或 project", "user")
   .option("--runtime <runtime>", "claude-code 或 codex (未传则自动探测)")
   .action(uninstallCommand);
+
+program
+  .command("update")
+  .description("升级 CLI 自身 / 已装 skill (Phase 5.1: 仅 --self)")
+  .option("--self", "仅升级 CLI 自身 (npm install -g)")
+  .option("--skills-only", "仅升级已装 skill (Phase 5.2 起实现)")
+  .option("--json", "JSON 输出")
+  .action(updateCommand);
 
 try {
   await program.parseAsync(process.argv);

@@ -168,17 +168,17 @@ describe("uninstall — error cases", () => {
   });
 });
 
-describe("uninstall — install+uninstall 往返", () => {
-  it("装一个 skill → list 看到 → uninstall → list 看不到", async () => {
+describe("uninstall — install+uninstall 往返 (用 installed 命令)", () => {
+  it("装一个 skill → installed 看到 → uninstall → installed 看不到", async () => {
     seedSkill("foo", intactFm);
     const { uninstallCommand } = await loadUninstall();
-    const { listCommand } = await import("../src/commands/list.js");
+    const { installedCommand } = await import("../src/commands/installed.js");
 
-    // 先 list 确认存在
+    // 先 installed 确认存在
     let stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
-    await listCommand({ scope: "user", runtime: "claude-code", json: true });
+    await installedCommand({ runtime: "claude-code", json: true });
     let parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
     expect(parsed.installed).toHaveLength(1);
     stdoutSpy.mockRestore();
@@ -190,11 +190,11 @@ describe("uninstall — install+uninstall 往返", () => {
     await uninstallCommand("foo", { scope: "user", runtime: "claude-code" });
     stdoutSpy.mockRestore();
 
-    // 再 list 确认消失
+    // 再 installed 确认消失
     stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
-    await listCommand({ scope: "user", runtime: "claude-code", json: true });
+    await installedCommand({ runtime: "claude-code", json: true });
     parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(""));
     expect(parsed.installed).toHaveLength(0);
   });
