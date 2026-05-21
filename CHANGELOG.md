@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 (2026-05-21)
+
+### Breaking
+- INDEX_URL 切换到 GitHub Release `catalog` tag. 不再从 `raw.githubusercontent.com/.../main/index.json` 拉.
+  - 老版本 (0.3.x) 仍可工作 — 公司库 git 中的 index.json 作为兼容快照保留, 但**不再自动更新**, 老用户看不到 0.4 之后新增的 skill.
+
+### Added
+- 启动时自检 npm registry, 落后版本会在 stderr 提示 `tfs update --self`. 24h cache, `TFS_NO_NAG=1` 关掉.
+
 ## [0.3.0] - 2026-05-14
 
 跨 location uninstall + TTY 交互 + list 命名重构. 用户 same-day pushback 触发 r2 iteration.
