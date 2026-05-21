@@ -1,6 +1,6 @@
 {
   "name": "tranfu-skills",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "公司 Claude/Codex skill 库 CLI",
   "license": "MIT",
   "repository": {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-05-21)
+
+### Added
+- TTY 下检测到落后版本时, 弹 interactive prompt 询问是否立即升级 (`y/N`). Y 跑 `npm install -g tranfu-skills@latest` + 提示重跑命令, N 写 `declined_until = now + 24h` 跳过下次 prompt.
+- 非 TTY (CI / pipe) 维持 0.4 行为: 仅 stderr nag, 不阻塞.
+- `--json` / `TFS_NO_NAG=1` / `NODE_ENV=test` 全部 skip prompt.
+
+### Why
+0.4 的 stderr nag 容易被无视, 装了的人不会主动升. 0.5 改成 TTY 下"问一句", 既不打扰 CI / 脚本用户, 又让交互用户一次就能升完.
+
 ## 0.4.1 (2026-05-21)
 
 ### Fixed

@@ -9,11 +9,12 @@ import { updateCommand } from "./commands/update.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { emitError } from "./lib/errors.js";
-import { checkSelfVersion } from "./lib/self-version-check.js";
+import { maybePromptSelfUpgrade } from "./lib/self-version-check.js";
 import pkg from "../package.json" with { type: "json" };
 
-// fire-and-forget self-version nag (silent on fail, test/--json/TFS_NO_NAG skips)
-void checkSelfVersion();
+// TTY + cache 显示 outdated → 阻塞 prompt 升级; 否则 fire-and-forget stderr nag.
+// hard rule: 永不 throw, 任何失败 silent (实现内 try/catch + 测试/--json/no-nag/非 TTY skip).
+await maybePromptSelfUpgrade();
 
 program.name("tfs").version(pkg.version);
 program.exitOverride();
