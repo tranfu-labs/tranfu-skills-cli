@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 (2026-05-21)
+
+### Fixed
+- npm 上的 `0.4.0` 是 broken release: publish 时未重新 build, `dist/cli.js` 是 `0.3.0` 时代的旧 bundle (老 INDEX_URL + 无 `checkSelfVersion`). `0.4.1` 重发正确 dist.
+- `package.json` 加 `prepublishOnly: "npm run build"` hook, 防止以后 publish 时漏 build.
+
+`npm i -g tranfu-skills@latest` 即可拿到正确的 `0.4.1`. 已经装了 `0.4.0` 但行为像 `0.3.0` 的用户也升一下.
+
 ## 0.4.0 (2026-05-21)
 
 ### Breaking
