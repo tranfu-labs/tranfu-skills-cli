@@ -4,18 +4,23 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { confirm, isInteractive } from "./prompt.js";
 
 const REGISTRY_URL = "https://registry.npmjs.org/tranfu-skills/latest";
 const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const DECLINE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
 const CACHE_FILE = "last-self-check.json";
 
-interface SelfCheckCache {
+export interface SelfCheckCache {
   checked_at: string;
   latest: string;
+  /** ISO 时间. now < declined_until → TTY prompt 跳过 (stderr nag 不受影响). */
+  declined_until?: string;
 }
 
 function cachePath(): string {
@@ -155,5 +160,103 @@ export async function checkSelfVersion(): Promise<void> {
     }
   } catch {
     // silent — hard rule
+  }
+}
+
+/**
+ * sync 决策: 是否应该弹 TTY 升级 prompt.
+ * 只读 cache, 不发起网络. 所有 skip 条件都在这里集中判.
+ *
+ * 返回 { latest, current } → 应该 prompt; null → 别 prompt (走 fire-and-forget refresh).
+ */
+export function shouldPromptInteractiveUpgrade(): {
+  latest: string;
+  current: string;
+} | null {
+  if (process.env.NODE_ENV === "test") return null;
+  if (process.env.VITEST) return null;
+  if (process.env.TFS_NO_NAG === "1") return null;
+  if (process.argv.includes("--json")) return null;
+  if (!isInteractive()) return null;
+
+  const cache = readCache();
+  if (!cache) return null;
+
+  const now = new Date();
+  if (!isCacheFresh(cache, now)) return null;
+
+  if (cache.declined_until) {
+    const decl = new Date(cache.declined_until);
+    if (!Number.isNaN(decl.getTime()) && now < decl) return null;
+  }
+
+  const current = readCurrentVersion();
+  if (!current) return null;
+
+  if (compareVersions(cache.latest, current) <= 0) return null;
+  return { latest: cache.latest, current };
+}
+
+/**
+ * 入口: 在 TTY + cache 显示 outdated + 未 declined 时弹 interactive prompt.
+ * 否则 fire-and-forget refresh + stderr nag (原 checkSelfVersion 行为).
+ *
+ * - Y → execSync `npm install -g tranfu-skills@latest` + 提示重跑 + process.exit(0).
+ *   (binary 已被替换, 但当前 Node 进程内存里仍是旧代码, 必须重跑.)
+ * - N → 写 declined_until = now + 24h, 继续跑原命令.
+ * - 升级失败 → stderr 报错 + 继续跑原命令 (老版本仍能用).
+ *
+ * 任何异常 → silent 吞掉, 不阻塞主流程.
+ */
+export async function maybePromptSelfUpgrade(): Promise<void> {
+  try {
+    const should = shouldPromptInteractiveUpgrade();
+    if (!should) {
+      // cache miss / stale / 非 TTY / json / declined / 不 outdated → 后台 refresh + 原 stderr nag
+      void checkSelfVersion();
+      return;
+    }
+
+    const ok = await confirm(
+      `tranfu-skills ${should.latest} 已发布 (当前 ${should.current}). 现在升级?`
+    );
+
+    if (ok) {
+      process.stderr.write("升级中: npm install -g tranfu-skills@latest\n");
+      try {
+        execSync("npm install -g tranfu-skills@latest", { stdio: "inherit" });
+        const rerun = process.argv.slice(2).join(" ");
+        process.stderr.write(
+          `\n✓ 升级完成. 请重跑: tfs ${rerun || "<your command>"}\n`
+        );
+        process.exit(0);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `升级失败 (${msg}). 手动跑: npm install -g tranfu-skills@latest\n`
+        );
+        // 不 exit — 老版本仍可用, 继续跑原命令
+        return;
+      }
+    } else {
+      // declined: 24h 内不再 prompt
+      try {
+        const cache = readCache();
+        if (cache) {
+          const declinedUntil = new Date(Date.now() + DECLINE_WINDOW_MS);
+          writeCache({
+            ...cache,
+            declined_until: declinedUntil
+              .toISOString()
+              .replace(/\.\d{3}Z$/, "Z"),
+          });
+        }
+      } catch {
+        // silent
+      }
+      return;
+    }
+  } catch {
+    // hard rule: 任何 throw 都不能阻塞主流程
   }
 }
