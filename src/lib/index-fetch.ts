@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { IndexJson } from "../types.js";
 
 const INDEX_URL =
-  "https://raw.githubusercontent.com/tranfu-labs/tranfu-skills/main/index.json";
+  "https://github.com/tranfu-labs/tranfu-skills/releases/latest/download/index.json";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Lazy resolution: 不在 module-load 时绑定 CACHE_DIR, 否则 vitest mock node:os homedir

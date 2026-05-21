@@ -9,7 +9,11 @@ import { updateCommand } from "./commands/update.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { emitError } from "./lib/errors.js";
+import { checkSelfVersion } from "./lib/self-version-check.js";
 import pkg from "../package.json" with { type: "json" };
+
+// fire-and-forget self-version nag (silent on fail, test/--json/TFS_NO_NAG skips)
+void checkSelfVersion();
 
 program.name("tfs").version(pkg.version);
 program.exitOverride();
