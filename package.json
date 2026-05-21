@@ -1,6 +1,6 @@
 {
   "name": "tranfu-skills",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "公司 Claude/Codex skill 库 CLI",
   "license": "MIT",
   "repository": {
@@ -26,7 +26,8 @@
   "scripts": {
     "build": "tsup src/cli.ts --format esm --target node20 --clean",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "commander": "^12.0.0",
