@@ -175,6 +175,13 @@ describe("doctor CLI (commands/doctor.ts)", () => {
         ok: true,
       }),
     }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockResolvedValue({
+        skills: [],
+        checked_at: "2026-05-14T00:00:00Z",
+        cached: false,
+      }),
+    }));
     const { doctorCommand } = await import("../src/commands/doctor.js");
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
@@ -234,6 +241,13 @@ describe("doctor CLI (commands/doctor.ts)", () => {
         ok: true, // fatal 都 OK
       }),
     }));
+    vi.doMock("../src/lib/stale-check.js", () => ({
+      detectOutdatedCached: vi.fn().mockResolvedValue({
+        skills: [],
+        checked_at: "2026-05-14T00:00:00Z",
+        cached: false,
+      }),
+    }));
     const { doctorCommand } = await import("../src/commands/doctor.js");
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
@@ -248,8 +262,8 @@ describe("doctor CLI (commands/doctor.ts)", () => {
   });
 });
 
-describe("doctor — slice-5 汇总 + --json", () => {
-  it("text 末尾追 '已装 N 个 skill' 行 (DoD-007)", async () => {
+describe("doctor — skills-up-to-date check + --json", () => {
+  it("outdated > 0 → ⚠ skills-up-to-date check, message 含 'tfs update', warning 计数包含它", async () => {
     vi.doMock("../src/lib/doctor.js", () => ({
       runDoctor: () => ({
         checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
@@ -274,10 +288,14 @@ describe("doctor — slice-5 汇总 + --json", () => {
     await doctorCommand({});
 
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    expect(out).toContain("⚠ skills-up-to-date:");
     expect(out).toMatch(/已装 2 个 skill, 1 个 outdated/);
+    expect(out).toContain("tfs update");
+    expect(out).toContain("1 warning(s)");
+    expect(out).not.toContain("All checks passed");
   });
 
-  it("text 0 outdated → 末尾不带 'outdated' 后半", async () => {
+  it("0 outdated → ✓ skills-up-to-date check, 不带 'tfs update' / 'outdated' 词", async () => {
     vi.doMock("../src/lib/doctor.js", () => ({
       runDoctor: () => ({
         checks: [{ name: "node-version", status: "ok", message: "ok", fatal: true }],
@@ -301,8 +319,11 @@ describe("doctor — slice-5 汇总 + --json", () => {
     await doctorCommand({});
 
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    expect(out).toMatch(/已装 1 个 skill\n$/);
+    expect(out).toContain("✓ skills-up-to-date:");
+    expect(out).toMatch(/已装 1 个 skill/);
     expect(out).not.toMatch(/outdated/);
+    expect(out).not.toContain("tfs update");
+    expect(out).toContain("All checks passed");
   });
 
   it("--json 输出 {checks, ok, installed_count, outdated_count}", async () => {
@@ -335,6 +356,13 @@ describe("doctor — slice-5 汇总 + --json", () => {
     expect(parsed.installed_count).toBe(2);
     expect(parsed.outdated_count).toBe(1);
     expect(Array.isArray(parsed.checks)).toBe(true);
+    // skills-up-to-date 作为 5 项里的第 5 项 (mock 只给 1 项 → 这里是 2 项)
+    const upToDate = parsed.checks.find(
+      (c: { name: string }) => c.name === "skills-up-to-date"
+    );
+    expect(upToDate).toBeDefined();
+    expect(upToDate.status).toBe("warn");
+    expect(upToDate.fatal).toBe(false);
   });
 
   it("detection silent fail → installed/outdated count = 0, doctor still 跑完", async () => {
@@ -359,5 +387,10 @@ describe("doctor — slice-5 汇总 + --json", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.installed_count).toBe(0);
     expect(parsed.outdated_count).toBe(0);
+    // detection 挂 → 不追加 skills-up-to-date check, 回到 4 项 (mock 只给 1 → 这里 1)
+    const upToDate = parsed.checks.find(
+      (c: { name: string }) => c.name === "skills-up-to-date"
+    );
+    expect(upToDate).toBeUndefined();
   });
 });
