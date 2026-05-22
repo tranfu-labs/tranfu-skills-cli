@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `tfs doctor`: outdated skill 从末尾一行 hint 提升为独立 check 项 `skills-up-to-date` (warn, non-fatal). outdated > 0 时输出 `⚠ skills-up-to-date: 已装 N 个 skill, M 个 outdated → 跑 \`tfs update\` 同步`, 顺势归到 "N warning(s)" 总数里; outdated = 0 输出 `✓ skills-up-to-date`. stale-check 探测失败时静默跳过该项, 回到 4 项 check (不阻塞 doctor 主流程).
+- `--json` 输出: `checks` 数组多一项 `skills-up-to-date` (detection 成功时), `installed_count` / `outdated_count` 字段不变, router skill 现有解析继续可用.
+
+### Why
+之前 `tfs doctor` 末尾的 "X 个 outdated" 只是 hint, 不影响 4/4 ✓. agent 按 INSTALL.md 严格走时看到 4/4 ✓ 会直接停下, 跳过 `tfs update`, 导致老用户的 meta-skill 永远停在装那天的版本. 提升为 ⚠ 检查项后, "任一 ⚠ 都按 doctor 提示处理" 的现有约定自然 cover 升级路径, INSTALL.md 不再需要单独加 "如果末尾 hint 有 outdated 就 ..." 这种 fragile 指引.
+
 ## 0.5.0 (2026-05-21)
 
 ### Added
