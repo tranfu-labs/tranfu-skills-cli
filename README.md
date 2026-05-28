@@ -1,7 +1,7 @@
-<p align="left">
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./assets/logo-dark.svg">
-    <img src="./assets/logo-light.svg" alt="tranfu" width="320">
+    <img src="./assets/logo-light.svg" alt="TranFu" width="260">
   </picture>
 </p>
 
