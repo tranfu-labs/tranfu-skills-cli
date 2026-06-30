@@ -1,7 +1,12 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveRuntime, type Runtime } from "../lib/runtime.js";
-import { parseScope, resolveTargetPath, type Scope } from "../lib/paths.js";
+import {
+  parseScope,
+  resolveTargetPath,
+  scopeToString,
+  type Scope,
+} from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
 import { findByName, removeEntryByPath, type RegistryEntry } from "../lib/registry.js";
@@ -44,7 +49,7 @@ export async function uninstallCommand(
     if (process.stdout.isTTY) {
       const { confirm } = await import("../lib/prompt.js");
       const ok = await confirm(
-        `uninstall ${skillName} from ${e.path}  (${e.runtime}, ${e.scope})?`
+        `uninstall ${skillName} from ${e.path}  (${e.runtime}, ${scopeToString(e.scope)})?`
       );
       if (!ok) {
         process.stdout.write("cancelled.\n");
@@ -59,12 +64,15 @@ export async function uninstallCommand(
   // 多处装了同名 skill — TTY 让用户多选 + 确认, 非 TTY 报 ambiguous_target
   if (!process.stdout.isTTY) {
     const locations = entries
-      .map((e, i) => `  ${i + 1}. ${e.path}  (${e.runtime}, ${e.scope})`)
+      .map(
+        (e, i) =>
+          `  ${i + 1}. ${e.path}  (${e.runtime}, ${scopeToString(e.scope)})`
+      )
       .join("\n");
     return emitError({
       error: "ambiguous_target",
       message: `${skillName} 装在 ${entries.length} 处:\n${locations}`,
-      hint: "传 --runtime=claude-code|codex --scope=user|project 精确指定, 或在 TTY 终端跑此命令以交互选择",
+      hint: "传 --runtime=claude-code|codex|hermes 与 --scope=user|project|profile:<name> 精确指定, 或在 TTY 终端跑此命令以交互选择",
       exit_code: 1,
     });
   }
@@ -77,7 +85,9 @@ async function promptAndRemove(
   entries: RegistryEntry[]
 ): Promise<void> {
   const { multiSelectFromList, confirm } = await import("../lib/prompt.js");
-  const choices = entries.map((e) => `${e.path}  (${e.runtime}, ${e.scope})`);
+  const choices = entries.map(
+    (e) => `${e.path}  (${e.runtime}, ${scopeToString(e.scope)})`
+  );
   const picked = await multiSelectFromList({
     question: `${skillName} 装在 ${entries.length} 处, 选要卸的:`,
     choices,
@@ -90,7 +100,9 @@ async function promptAndRemove(
 
   process.stdout.write(`将卸载以下 ${targets.length} 处:\n`);
   for (const t of targets) {
-    process.stdout.write(`  ${t.path}  (${t.runtime}, ${t.scope})\n`);
+    process.stdout.write(
+      `  ${t.path}  (${t.runtime}, ${scopeToString(t.scope)})\n`
+    );
   }
   const ok = await confirm("确认卸载?");
   if (!ok) {

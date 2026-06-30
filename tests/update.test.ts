@@ -578,7 +578,7 @@ describe("update --check-only (Phase 1 slice-1)", () => {
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
     expect(out).toMatchInlineSnapshot(`
       "发现 1 个 skill 可更新:
-        - skill-a: old-sha..new-sha (claude-code)
+        - skill-a: old-sha..new-sha (claude-code/user)
       "
     `);
     // slice-2 piggyback marker prefix 隔离 — slice-1 text 输出禁出现 ⚠

@@ -166,3 +166,133 @@ describe("registry — findByName", () => {
     expect(reg.findByName("nonexistent")).toEqual([]);
   });
 });
+
+/** seed 一个真实存在的 path, 把 entry 写到 ~/.tfs/installed.json. 用旧字符串 scope. */
+function writeRawRegistry(
+  entries: Array<{ name: string; runtime: string; scope: unknown; path: string }>
+) {
+  mkdirSync(join(tmpHome, ".tfs"), { recursive: true });
+  const file = {
+    version: 1,
+    entries: entries.map((e) => ({
+      ...e,
+      installed_version: "v1",
+      installed_at: "2026-05-14",
+    })),
+  };
+  writeFileSync(
+    join(tmpHome, ".tfs", "installed.json"),
+    JSON.stringify(file, null, 2),
+    "utf8"
+  );
+}
+
+describe("registry — lazy migrate (旧字符串 scope → 对象)", () => {
+  it("旧字符串 scope 'user' 自动迁成 {kind:'user'}", async () => {
+    // 真实目录, 让 lazy prune 不删它
+    const dir = seedStampedSkill("claude-code", "foo", "abc");
+    writeRawRegistry([
+      { name: "foo", runtime: "claude-code", scope: "user", path: dir },
+    ]);
+    const reg = await loadRegistry();
+    const entries = reg.readRegistry();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.scope).toEqual({ kind: "user" });
+    // 回写也应是对象
+    const onDisk = JSON.parse(
+      readFileSync(join(tmpHome, ".tfs", "installed.json"), "utf8")
+    );
+    expect(onDisk.entries[0].scope).toEqual({ kind: "user" });
+  });
+
+  it("旧字符串 scope 'project' 自动迁成 {kind:'project'}", async () => {
+    const dir = seedStampedSkill("claude-code", "foo", "abc");
+    writeRawRegistry([
+      { name: "foo", runtime: "claude-code", scope: "project", path: dir },
+    ]);
+    const reg = await loadRegistry();
+    const entries = reg.readRegistry();
+    expect(entries[0]!.scope).toEqual({ kind: "project" });
+  });
+
+  it("不可识别 scope 值 → 丢弃该 entry (不影响其他 entry)", async () => {
+    const goodDir = seedStampedSkill("claude-code", "foo", "abc");
+    const badDir = seedStampedSkill("codex", "bar", "def");
+    writeRawRegistry([
+      { name: "foo", runtime: "claude-code", scope: "user", path: goodDir },
+      { name: "bar", runtime: "codex", scope: "weirdvalue", path: badDir },
+    ]);
+    const reg = await loadRegistry();
+    const entries = reg.readRegistry();
+    // bar 因 scope 不可识别被丢弃
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.name).toBe("foo");
+  });
+
+  it("新对象 scope {kind:'profile',name:'coder'} 直接接受", async () => {
+    // seed hermes profile 目录 (含 tranfu 分组)
+    const hermesDir = join(
+      tmpHome,
+      ".hermes",
+      "profiles",
+      "coder",
+      "skills",
+      "tranfu",
+      "baz"
+    );
+    mkdirSync(hermesDir, { recursive: true });
+    writeFileSync(
+      join(hermesDir, "SKILL.md"),
+      `---\ninstalled_by: tranfu-skills\ninstalled_version: ghi\ninstalled_at: 2026-05-14\ninstalled_source: own\n---\n`
+    );
+    writeRawRegistry([
+      {
+        name: "baz",
+        runtime: "hermes",
+        scope: { kind: "profile", name: "coder" },
+        path: hermesDir,
+      },
+    ]);
+    const reg = await loadRegistry();
+    const entries = reg.readRegistry();
+    expect(entries[0]!.scope).toEqual({ kind: "profile", name: "coder" });
+  });
+});
+
+describe("registry — bootstrap 覆盖 hermes 多 profile", () => {
+  it("hermes 默认 + 命名 profile 都扫到, 各自 entry scope 正确", async () => {
+    // 默认 profile (~/.hermes/skills/tranfu/foo)
+    const defaultDir = join(tmpHome, ".hermes", "skills", "tranfu", "foo");
+    mkdirSync(defaultDir, { recursive: true });
+    writeFileSync(
+      join(defaultDir, "SKILL.md"),
+      `---\ninstalled_by: tranfu-skills\ninstalled_version: v1\ninstalled_at: 2026-05-14\ninstalled_source: own\n---\n`
+    );
+    // 命名 profile coder
+    const coderDir = join(
+      tmpHome,
+      ".hermes",
+      "profiles",
+      "coder",
+      "skills",
+      "tranfu",
+      "bar"
+    );
+    mkdirSync(coderDir, { recursive: true });
+    writeFileSync(
+      join(coderDir, "SKILL.md"),
+      `---\ninstalled_by: tranfu-skills\ninstalled_version: v2\ninstalled_at: 2026-05-14\ninstalled_source: own\n---\n`
+    );
+
+    const reg = await loadRegistry();
+    const entries = reg.readRegistry();
+    const hermesEntries = entries.filter((e) => e.runtime === "hermes");
+    expect(hermesEntries).toHaveLength(2);
+
+    const fooEntry = hermesEntries.find((e) => e.name === "foo");
+    expect(fooEntry?.scope).toEqual({ kind: "user" });
+
+    const barEntry = hermesEntries.find((e) => e.name === "bar");
+    expect(barEntry?.scope).toEqual({ kind: "profile", name: "coder" });
+  });
+});

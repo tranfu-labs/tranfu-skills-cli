@@ -2,17 +2,19 @@
  * doctor: SDK 形态 (供 init 等命令内部调用). 返回结构化结果, 不写 stdout/stderr.
  * CLI 形态 (`tfs doctor` 命令) 在 commands/doctor.ts 调用此 SDK + 人话渲染.
  *
- * Checks (Phase 6.1-6.5):
+ * Checks (Phase 6.1-6.5 + hermes-profile):
  * - node-version (fatal): Node >=20
- * - runtime (fatal): >=1 个 ~/.claude 或 ~/.codex 存在
+ * - runtime (fatal): >=1 个 ~/.claude / ~/.codex / ~/.hermes 存在
  * - tfs-in-path (warn): which tfs 能找到, 且与 process.execPath 同 node 目录
  * - legacy-cache (warn): 检测旧 ~/.aistore-labs / ~/.tranfu-labs 缓存
+ * - hermes-profile (warn, 条件性): 仅当 hermes available 时追加, 报告 active + 所有 profile
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { detectAvailableRuntimes, type Runtime } from "./runtime.js";
+import { detectActiveProfile, listHermesProfiles } from "./hermes.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -66,7 +68,7 @@ export function _checkRuntimeFromList(available: Runtime[]): DoctorCheck {
       name: "runtime",
       status: "fail",
       message:
-        "未检测到任何 runtime (~/.claude 或 ~/.codex). 先初始化 Claude Code 或 Codex CLI.",
+        "未检测到任何 runtime (~/.claude, ~/.codex, ~/.hermes 都不存在). 先初始化 Claude Code / Codex CLI / Hermes Agent.",
       fatal: true,
     };
   }
@@ -75,6 +77,44 @@ export function _checkRuntimeFromList(available: Runtime[]): DoctorCheck {
     status: "ok",
     message: `探测到 ${available.length} 个 runtime: ${available.join(", ")}`,
     fatal: true,
+  };
+}
+
+/**
+ * Internal: hermes-profile check (条件性).
+ * 仅当 hermesAvailable=true 时返回 check (其他场景该项不出现, 保持非 hermes 用户 doctor 输出干净).
+ * 入参纯数据, 便于测试.
+ */
+export function _checkHermesProfile(
+  hermesAvailable: boolean,
+  whichHermesOutput: string | null,
+  profiles: string[],
+  active: string | null
+): DoctorCheck | null {
+  if (!hermesAvailable) return null;
+  if (!whichHermesOutput) {
+    return {
+      name: "hermes-profile",
+      status: "warn",
+      message:
+        "hermes 二进制不在 PATH, detectActiveProfile 第二段 fallback 不可用 — 已用 env / 默认 profile 兜底",
+      fatal: false,
+    };
+  }
+  if (profiles.length === 0) {
+    return {
+      name: "hermes-profile",
+      status: "ok",
+      message: "default profile only (~/.hermes/skills/tranfu/)",
+      fatal: false,
+    };
+  }
+  const activeLabel = active ?? "(default)";
+  return {
+    name: "hermes-profile",
+    status: "ok",
+    message: `active: ${activeLabel}; all: [${profiles.join(", ")}]`,
+    fatal: false,
   };
 }
 
@@ -148,17 +188,43 @@ function tryWhichTfs(): string | null {
   }
 }
 
+function tryWhichHermes(): string | null {
+  try {
+    const out = execSync("command -v hermes 2>/dev/null", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 export function runDoctor(): DoctorResult {
   const found = LEGACY_CACHE_PATHS
     .map((p) => join(homedir(), p))
     .filter(existsSync);
+  const available = detectAvailableRuntimes();
+  const hermesAvailable = available.includes("hermes");
 
   const checks: DoctorCheck[] = [
     _checkNodeVersionFromString(process.versions.node),
-    _checkRuntimeFromList(detectAvailableRuntimes()),
+    _checkRuntimeFromList(available),
     _checkTfsInPath(tryWhichTfs(), process.execPath),
     _checkLegacyCachePaths(found),
   ];
+
+  // hermes-profile check 条件性追加, 仅 hermes available 时
+  if (hermesAvailable) {
+    const profileCheck = _checkHermesProfile(
+      true,
+      tryWhichHermes(),
+      listHermesProfiles(),
+      detectActiveProfile()
+    );
+    if (profileCheck) checks.push(profileCheck);
+  }
+
   const ok = checks.every((c) => !c.fatal || c.status === "ok");
   return { checks, ok };
 }

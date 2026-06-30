@@ -1,4 +1,5 @@
 import type { Runtime } from "./lib/runtime.js";
+import type { Scope } from "./lib/paths.js";
 
 export type SkillType = "meta" | "own" | "external";
 
@@ -37,5 +38,7 @@ export interface SkillUpdateResult {
     | "deleted-upstream-acked"
     | "failed";
   runtime: Runtime;
+  /** scope 缺省视为 {kind:"user"} (兼容旧调用). hermes 多 profile 场景 MUST 显式带. */
+  scope?: Scope;
   error?: string;
 }

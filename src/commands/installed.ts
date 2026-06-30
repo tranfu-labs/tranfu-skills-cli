@@ -1,5 +1,10 @@
 import { resolveRuntime, type Runtime } from "../lib/runtime.js";
-import { parseScope, type Scope } from "../lib/paths.js";
+import {
+  parseScope,
+  scopeEquals,
+  scopeToString,
+  type Scope,
+} from "../lib/paths.js";
 import { readStamp } from "../lib/stamp.js";
 import { emitError } from "../lib/errors.js";
 import { detectOutdatedCached, staleMarkerLine } from "../lib/stale-check.js";
@@ -40,7 +45,7 @@ export async function installedCommand(opts: {
 
   // 拉 registry; lazy prune 已在 readRegistry 内部处理.
   const entries = readRegistry().filter((e) => {
-    if (scopeFilter && e.scope !== scopeFilter) return false;
+    if (scopeFilter && !scopeEquals(e.scope, scopeFilter)) return false;
     if (runtimeFilter && e.runtime !== runtimeFilter) return false;
     return true;
   });
@@ -86,9 +91,11 @@ export async function installedCommand(opts: {
 
   if (opts.json) {
     const payload: {
-      installed: InstalledSkill[];
+      installed: Array<Omit<InstalledSkill, "scope"> & { scope: string }>;
       stale_hint?: { outdated_count: number; names: string[] };
-    } = { installed };
+    } = {
+      installed: installed.map((s) => ({ ...s, scope: scopeToString(s.scope) })),
+    };
     if (hint) payload.stale_hint = hint;
     process.stdout.write(JSON.stringify(payload) + "\n");
     return;
@@ -97,7 +104,7 @@ export async function installedCommand(opts: {
   if (installed.length === 0) {
     const filterDesc = [
       runtimeFilter ? `runtime=${runtimeFilter}` : null,
-      scopeFilter ? `scope=${scopeFilter}` : null,
+      scopeFilter ? `scope=${scopeToString(scopeFilter)}` : null,
     ]
       .filter(Boolean)
       .join(", ");
@@ -116,7 +123,7 @@ export async function installedCommand(opts: {
     const partialMarker = s.status === "partial" ? " [partial]" : "";
     const outdatedMarker = s.outdated ? " outdated" : "";
     process.stdout.write(
-      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${s.scope}${partialMarker}${outdatedMarker}\n`
+      `  ${s.name.padEnd(nameW)}  ${shortSha}  ${s.runtime}/${scopeToString(s.scope)}${partialMarker}${outdatedMarker}\n`
     );
   }
   const marker = staleMarkerLine(hint);
