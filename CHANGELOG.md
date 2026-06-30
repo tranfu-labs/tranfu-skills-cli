@@ -1,13 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-06-30)
+
+### Added
+- 新增 `hermes` runtime — 支持把公司库 skill 装到 NousResearch hermes agent (`~/.hermes/`), 统一放到 `skills/tranfu/<skill>/` 分组下, 与用户自装 / hermes 自带 skill 物理隔离.
+- `--scope` 接受新字面值 `profile:<name>`, 配合 `--runtime hermes` 装到指定 profile (`~/.hermes/profiles/<name>/skills/tranfu/<skill>/`). 未指定 scope 时自动探测 active profile (三段 fallback: `$HERMES_HOME` env → `hermes profile list` → 默认 profile), 输出明示 `detected hermes profile: X`.
+- `tfs doctor` 新增 `hermes-profile` 检查项 (仅 `~/.hermes/` 存在时显示), 报告 active profile + 全部 profile 列表; runtime check 把 hermes 也计入.
+- 新增 `src/lib/hermes.ts` (`detectActiveProfile()` / `listHermesProfiles()`).
+- `tfs init` 装 meta-skill 到 hermes 时自动走 active profile.
 
 ### Changed
 - `tfs doctor`: outdated skill 从末尾一行 hint 提升为独立 check 项 `skills-up-to-date` (warn, non-fatal). outdated > 0 时输出 `⚠ skills-up-to-date: 已装 N 个 skill, M 个 outdated → 跑 \`tfs update\` 同步`, 顺势归到 "N warning(s)" 总数里; outdated = 0 输出 `✓ skills-up-to-date`. stale-check 探测失败时静默跳过该项, 回到 4 项 check (不阻塞 doctor 主流程).
 - `--json` 输出: `checks` 数组多一项 `skills-up-to-date` (detection 成功时), `installed_count` / `outdated_count` 字段不变, router skill 现有解析继续可用.
+- README 按 readme-optimization playbook 重写, 首屏 logo 居中收宽到 260px, 改用单图 lockup 替代 `<picture>` 双图.
+- 内部 `Scope` 类型从字符串联合升级为 discriminated union `{kind:"user"|"project"} | {kind:"profile", name:string}`. `installed.json` 旧字符串 scope entry lazy migrate 成新结构; 外部 CLI 字面值 `user` / `project` 完全兼容, 旧戳 / 旧 registry 文件零迁移成本.
+
+### Errors
+- 新增 `scope_unsupported` (exit 1): `(hermes, project)` 和 `(claude-code|codex, profile:*)` 这种非法组合拒绝执行.
 
 ### Why
-之前 `tfs doctor` 末尾的 "X 个 outdated" 只是 hint, 不影响 4/4 ✓. agent 按 INSTALL.md 严格走时看到 4/4 ✓ 会直接停下, 跳过 `tfs update`, 导致老用户的 meta-skill 永远停在装那天的版本. 提升为 ⚠ 检查项后, "任一 ⚠ 都按 doctor 提示处理" 的现有约定自然 cover 升级路径, INSTALL.md 不再需要单独加 "如果末尾 hint 有 outdated 就 ..." 这种 fragile 指引.
+- hermes 用户之前没法用 `tfs` 装公司库 skill, 只能手动 `git clone` + 拷贝. 0.6 让 hermes 成为一等 runtime, 且支持精确装到具体 profile.
+- doctor 把 outdated 提为 ⚠ check, 是因为作为末尾 hint 容易被 agent 跳过 — agent 按 INSTALL.md 严格走时看到 4/4 ✓ 会直接停下, 跳过 `tfs update`, 导致老用户的 meta-skill 永远停在装那天的版本.
 
 ## 0.5.0 (2026-05-21)
 
