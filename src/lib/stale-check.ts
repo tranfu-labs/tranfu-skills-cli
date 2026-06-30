@@ -10,8 +10,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SkillUpdateResult } from "../types.js";
 import { fetchIndex } from "./index-fetch.js";
-import { ALL_RUNTIMES } from "./runtime.js";
-import { resolveTargetPath } from "./paths.js";
+import { ALL_RUNTIMES, type Runtime } from "./runtime.js";
+import { resolveTargetPath, SCOPE_USER, type Scope } from "./paths.js";
+import { listHermesProfiles } from "./hermes.js";
 import { readStamp } from "./stamp.js";
 import { readAck } from "./ack.js";
 
@@ -57,21 +58,37 @@ export interface DetectOutdatedResult {
   cached: boolean;
 }
 
+/** 构造所有要扫描的 (runtime, scope) 对. claude-code/codex 仅 user; hermes 默认 + 所有命名 profile. */
+function scanPairs(): Array<{ runtime: Runtime; scope: Scope }> {
+  const pairs: Array<{ runtime: Runtime; scope: Scope }> = [];
+  for (const runtime of ALL_RUNTIMES) {
+    if (runtime === "hermes") {
+      pairs.push({ runtime, scope: SCOPE_USER });
+      for (const name of listHermesProfiles()) {
+        pairs.push({ runtime, scope: { kind: "profile", name } });
+      }
+    } else {
+      pairs.push({ runtime, scope: SCOPE_USER });
+    }
+  }
+  return pairs;
+}
+
 /**
- * 扫描本机所有 runtime 下 user-scope 已装的 tfs skill, 与远端 index 比对 sha.
- * 返回 stamped skill 的检测结果 (含 noop / outdated / deleted-upstream 全部状态).
- * 不写 cache 文件 (slice-1 阶段 cached 恒 false; slice-2 加 wrapper 落地).
- * 网络挂 → throws TfsError (走 emitError); silent degrade 不在此层.
+ * 扫所有 runtime 已装 tfs skill 与远端 index sha 比对.
+ * claude-code/codex 仅扫 user scope; hermes 同时扫默认 profile 与 listHermesProfiles 列出的所有命名 profile.
+ * 返回 stamped skill 的检测结果 (含 noop / outdated / deleted-upstream 全部状态), 每条带 runtime+scope.
+ * 不写 cache 文件; 网络挂 throws TfsError 由调用方 handle.
  */
 export async function detectOutdated(): Promise<DetectOutdatedResult> {
   const index = await fetchIndex();
   const ackedDeletions = readAck();
   const skills: SkillUpdateResult[] = [];
 
-  for (const runtime of ALL_RUNTIMES) {
+  for (const { runtime, scope } of scanPairs()) {
     let dir: string;
     try {
-      dir = resolveTargetPath({ runtime, scope: "user" });
+      dir = resolveTargetPath({ runtime, scope });
     } catch {
       continue;
     }
@@ -110,6 +127,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
             ? "deleted-upstream-acked"
             : "deleted-upstream",
           runtime,
+          scope,
         });
         continue;
       }
@@ -121,6 +139,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
           to: installedVersion,
           status: "noop",
           runtime,
+          scope,
         });
         continue;
       }
@@ -131,6 +150,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
         to: indexEntry.sha,
         status: "outdated",
         runtime,
+        scope,
       });
     }
   }

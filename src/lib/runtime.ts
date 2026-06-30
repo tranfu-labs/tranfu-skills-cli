@@ -2,14 +2,15 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type Runtime = "claude-code" | "codex";
+export type Runtime = "claude-code" | "codex" | "hermes";
 
-export const ALL_RUNTIMES: Runtime[] = ["claude-code", "codex"];
+export const ALL_RUNTIMES: Runtime[] = ["claude-code", "codex", "hermes"];
 
-/** Runtime → user 级根目录 (含 `.claude` 或 `.codex`, 不含 `/skills`) */
+/** Runtime → user 级根目录 (含 `.claude` / `.codex` / `.hermes`, 不含 `/skills`) */
 const RUNTIME_HOME_DIRS: Record<Runtime, string> = {
   "claude-code": join(homedir(), ".claude"),
   "codex": join(homedir(), ".codex"),
+  "hermes": join(homedir(), ".hermes"),
 };
 
 /** 探测本机已初始化的 runtime (基于 ~/.claude 或 ~/.codex 是否存在) */
@@ -31,11 +32,15 @@ export function detectAvailableRuntimes(): Runtime[] {
  */
 export function resolveRuntime(explicit?: string): Runtime {
   if (explicit !== undefined) {
-    if (explicit !== "claude-code" && explicit !== "codex") {
+    if (
+      explicit !== "claude-code" &&
+      explicit !== "codex" &&
+      explicit !== "hermes"
+    ) {
       throw {
         error: "runtime_invalid",
-        message: `--runtime 必须是 claude-code 或 codex, 当前: ${explicit}`,
-        hint: "改 --runtime=claude-code 或 --runtime=codex",
+        message: `--runtime 必须是 claude-code / codex / hermes, 当前: ${explicit}`,
+        hint: "改 --runtime=claude-code 或 --runtime=codex 或 --runtime=hermes",
         exit_code: 1,
       };
     }
@@ -46,8 +51,8 @@ export function resolveRuntime(explicit?: string): Runtime {
   if (available.length === 0) {
     throw {
       error: "runtime_required",
-      message: "未检测到任何 runtime (~/.claude 和 ~/.codex 都不存在)",
-      hint: "先初始化 Claude Code 或 Codex CLI; 或显式传 --runtime=claude-code|codex",
+      message: "未检测到任何 runtime (~/.claude, ~/.codex, ~/.hermes 都不存在)",
+      hint: "先初始化 Claude Code / Codex CLI / Hermes Agent; 或显式传 --runtime=claude-code|codex|hermes",
       exit_code: 1,
     };
   }
@@ -58,7 +63,7 @@ export function resolveRuntime(explicit?: string): Runtime {
   throw {
     error: "runtime_required",
     message: `检测到 ${available.length} 个 runtime: ${available.join(", ")}, 必须显式指定`,
-    hint: "传 --runtime=claude-code 或 --runtime=codex",
+    hint: "传 --runtime=claude-code|codex|hermes",
     exit_code: 1,
   };
 }

@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { resolveTargetPath } from "../lib/paths.js";
+import { resolveTargetPath, scopeToString, SCOPE_USER } from "../lib/paths.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
 import {
@@ -85,9 +85,11 @@ async function doSkillsUpdate(): Promise<SkillUpdateResult[]> {
       results.push({ ...r, status: "failed", error: "index entry vanished" });
       continue;
     }
+    // stale-check 已带回 r.scope (hermes 多 profile 必需); 兼容旧 entry 无 scope 时回落 user
+    const scope = r.scope ?? SCOPE_USER;
     let dir: string;
     try {
-      dir = resolveTargetPath({ runtime: r.runtime, scope: "user" });
+      dir = resolveTargetPath({ runtime: r.runtime, scope });
     } catch (e) {
       results.push({ ...r, status: "failed", error: String(e) });
       continue;
@@ -166,8 +168,9 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
     if (outdated.length === 0) return; // 0 outdated → 空 stdout
     process.stdout.write(`发现 ${outdated.length} 个 skill 可更新:\n`);
     for (const s of outdated) {
+      const scopeStr = s.scope ? `/${scopeToString(s.scope)}` : "";
       process.stdout.write(
-        `  - ${s.name}: ${s.from.slice(0, 7)}..${s.to.slice(0, 7)} (${s.runtime})\n`
+        `  - ${s.name}: ${s.from.slice(0, 7)}..${s.to.slice(0, 7)} (${s.runtime}${scopeStr})\n`
       );
     }
     return;
@@ -242,6 +245,7 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
           to: r.to,
           status: r.status,
           ...(r.runtime ? { runtime: r.runtime } : {}),
+          ...(r.scope ? { scope: scopeToString(r.scope) } : {}),
           ...(r.error ? { error: r.error } : {}),
         })),
       }) + "\n"
@@ -286,8 +290,9 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
       if (updated.length) {
         process.stdout.write(`Updated ${updated.length} skill(s):\n`);
         for (const r of updated) {
+          const scopeStr = r.scope ? `/${scopeToString(r.scope)}` : "";
           process.stdout.write(
-            `  ${r.name}: ${r.from.slice(0, 7)} → ${r.to.slice(0, 7)} (${r.runtime})\n`
+            `  ${r.name}: ${r.from.slice(0, 7)} → ${r.to.slice(0, 7)} (${r.runtime}${scopeStr})\n`
           );
         }
       }
@@ -301,7 +306,8 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
           `${orphan.length} skill(s) no longer in remote index (deleted-upstream):\n`
         );
         for (const r of orphan) {
-          process.stdout.write(`  ${r.name} (${r.runtime})\n`);
+          const scopeStr = r.scope ? `/${scopeToString(r.scope)}` : "";
+          process.stdout.write(`  ${r.name} (${r.runtime}${scopeStr})\n`);
         }
         process.stdout.write(
           "  → tfs update --ack-deletions 静音此 warn (skill 文件保留, 不删).\n"

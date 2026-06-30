@@ -100,44 +100,81 @@ describe("install — TTY scope resolver (slice-3)", () => {
   it("explicit --scope → 不弹 prompt", async () => {
     setTTY(true);
     const { _resolveScopeInteractive } = await loadInstallHelpers();
-    expect(await _resolveScopeInteractive("project")).toBe("project");
+    const r = await _resolveScopeInteractive("project", "claude-code");
+    expect(r.scope).toEqual({ kind: "project" });
+    expect(r.detectedHint).toBeUndefined();
   });
 
-  it("非 TTY + 无 explicit → 默认 user (零漂移)", async () => {
+  it("非 TTY + 无 explicit (claude-code) → 默认 user (零漂移)", async () => {
     setTTY(false);
     const { _resolveScopeInteractive } = await loadInstallHelpers();
-    expect(await _resolveScopeInteractive(undefined)).toBe("user");
+    const r = await _resolveScopeInteractive(undefined, "claude-code");
+    expect(r.scope).toEqual({ kind: "user" });
   });
 
-  it("TTY + 无 explicit + 选 0 → user", async () => {
+  it("TTY + 无 explicit (claude-code) + 选 0 → user", async () => {
     setTTY(true);
     vi.doMock("../src/lib/prompt.js", () => ({
       selectFromList: vi.fn().mockResolvedValue(0),
       isInteractive: () => true,
     }));
     const { _resolveScopeInteractive } = await loadInstallHelpers();
-    expect(await _resolveScopeInteractive(undefined)).toBe("user");
+    const r = await _resolveScopeInteractive(undefined, "claude-code");
+    expect(r.scope).toEqual({ kind: "user" });
   });
 
-  it("TTY + 无 explicit + 选 1 → project", async () => {
+  it("TTY + 无 explicit (claude-code) + 选 1 → project", async () => {
     setTTY(true);
     vi.doMock("../src/lib/prompt.js", () => ({
       selectFromList: vi.fn().mockResolvedValue(1),
       isInteractive: () => true,
     }));
     const { _resolveScopeInteractive } = await loadInstallHelpers();
-    expect(await _resolveScopeInteractive(undefined)).toBe("project");
+    const r = await _resolveScopeInteractive(undefined, "claude-code");
+    expect(r.scope).toEqual({ kind: "project" });
   });
 
-  it("TTY + quit → throw scope_invalid", async () => {
+  it("TTY + quit (claude-code) → throw scope_invalid", async () => {
     setTTY(true);
     vi.doMock("../src/lib/prompt.js", () => ({
       selectFromList: vi.fn().mockResolvedValue("quit"),
       isInteractive: () => true,
     }));
     const { _resolveScopeInteractive } = await loadInstallHelpers();
-    await expect(_resolveScopeInteractive(undefined)).rejects.toMatchObject({
+    await expect(
+      _resolveScopeInteractive(undefined, "claude-code")
+    ).rejects.toMatchObject({
       error: "scope_invalid",
     });
+  });
+});
+
+describe("install — hermes scope resolver (detectActiveProfile fallback)", () => {
+  it("hermes + 无 explicit + 有 active profile (env) → profile:<name> + 提示", async () => {
+    setTTY(true);
+    process.env.HERMES_HOME = `${tmpHome}/.hermes/profiles/coder`;
+    const { _resolveScopeInteractive } = await loadInstallHelpers();
+    const r = await _resolveScopeInteractive(undefined, "hermes");
+    expect(r.scope).toEqual({ kind: "profile", name: "coder" });
+    expect(r.detectedHint).toContain("detected hermes profile: coder");
+    delete process.env.HERMES_HOME;
+  });
+
+  it("hermes + 无 explicit + 无 active (env=空 + hermes 二进制不在) → user + 默认提示", async () => {
+    setTTY(false);
+    delete process.env.HERMES_HOME;
+    // hermes 二进制不在 PATH (CI 默认就这样), execSync 内会失败回到 null
+    const { _resolveScopeInteractive } = await loadInstallHelpers();
+    const r = await _resolveScopeInteractive(undefined, "hermes");
+    expect(r.scope).toEqual({ kind: "user" });
+    expect(r.detectedHint).toContain("no active hermes profile");
+  });
+
+  it("hermes + explicit profile:coder → 直接用", async () => {
+    setTTY(false);
+    const { _resolveScopeInteractive } = await loadInstallHelpers();
+    const r = await _resolveScopeInteractive("profile:coder", "hermes");
+    expect(r.scope).toEqual({ kind: "profile", name: "coder" });
+    expect(r.detectedHint).toBeUndefined();
   });
 });

@@ -6,7 +6,14 @@ import {
   detectAvailableRuntimes,
   type Runtime,
 } from "../lib/runtime.js";
-import { parseScope, resolveTargetPath, type Scope } from "../lib/paths.js";
+import {
+  parseScope,
+  resolveTargetPath,
+  SCOPE_USER,
+  SCOPE_PROJECT,
+  type Scope,
+} from "../lib/paths.js";
+import { detectActiveProfile } from "../lib/hermes.js";
 import { readStamp } from "../lib/stamp.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
@@ -29,21 +36,49 @@ export async function _resolveRuntimeInteractive(
     throw {
       error: "runtime_required",
       message: "用户取消",
-      hint: "再次跑命令选择 runtime, 或显式 --runtime=claude-code|codex",
+      hint: "再次跑命令选择 runtime, 或显式 --runtime=claude-code|codex|hermes",
       exit_code: 1,
     };
   }
   return available[picked]!;
 }
 
+/**
+ * 解析 install 的 scope. 行为按 runtime 分流:
+ *   - 显式 --scope: 走 parseScope (校验字面值 + 把 profile:<n> 拆出); resolveTargetPath 再校验非法组合 (e.g. claude-code + profile)
+ *   - hermes 未传 --scope: 调 detectActiveProfile, 自动落 active profile 或默认; 不弹 TTY 选择
+ *   - claude-code / codex 未传 --scope: TTY 走 user/project 二选一; 非 TTY 默认 user
+ * 返回 scope 与 (可选) detectedHint 让 install 主流程在装前打印.
+ */
 export async function _resolveScopeInteractive(
-  explicit: string | undefined
-): Promise<Scope> {
-  if (explicit !== undefined) return parseScope(explicit);
-  if (!isInteractive()) return parseScope(undefined); // 非 TTY 默认 user, 零漂移
+  explicit: string | undefined,
+  runtime: Runtime
+): Promise<{ scope: Scope; detectedHint?: string }> {
+  if (explicit !== undefined) return { scope: parseScope(explicit) };
+
+  if (runtime === "hermes") {
+    const active = detectActiveProfile();
+    if (active) {
+      return {
+        scope: { kind: "profile", name: active },
+        detectedHint: `· detected hermes profile: ${active}\n`,
+      };
+    }
+    return {
+      scope: SCOPE_USER,
+      detectedHint: `· no active hermes profile, installing to default (~/.hermes/skills/tranfu/)\n`,
+    };
+  }
+
+  // claude-code / codex
+  if (!isInteractive()) return { scope: SCOPE_USER }; // 非 TTY 默认 user, 零漂移
+  const subdir = runtime === "claude-code" ? ".claude" : ".codex";
   const picked = await selectFromList({
     question: "装到哪个 scope?",
-    choices: ["user (~/.claude or ~/.codex)", "project (git-root/.claude)"],
+    choices: [
+      `user (~/${subdir}/skills)`,
+      `project (git-root/${subdir}/skills)`,
+    ],
   });
   if (picked === "quit" || picked === "all") {
     throw {
@@ -53,7 +88,7 @@ export async function _resolveScopeInteractive(
       exit_code: 1,
     };
   }
-  return picked === 0 ? "user" : "project";
+  return { scope: picked === 0 ? SCOPE_USER : SCOPE_PROJECT };
 }
 
 /** Type guard: 区分 lib throw 的 TfsError 与 fs/network 原生 Error */
@@ -67,6 +102,12 @@ function isTfsError(e: unknown): e is TfsError {
   );
 }
 
+const PRODUCT_NAME: Record<Runtime, string> = {
+  "claude-code": "Claude Code",
+  "codex": "Codex CLI",
+  "hermes": "Hermes Agent",
+};
+
 export async function installCommand(
   skillName: string,
   opts: { scope?: string; runtime?: string; force?: boolean }
@@ -75,13 +116,17 @@ export async function installCommand(
   let runtime: Runtime;
   let scope: Scope;
   let target: string;
+  let detectedHint: string | undefined;
   try {
     runtime = await _resolveRuntimeInteractive(opts.runtime);
-    scope = await _resolveScopeInteractive(opts.scope);
+    const r = await _resolveScopeInteractive(opts.scope, runtime);
+    scope = r.scope;
+    detectedHint = r.detectedHint;
     target = resolveTargetPath({ runtime, scope });
   } catch (e) {
     return emitError(e as TfsError);
   }
+  if (detectedHint) process.stdout.write(detectedHint);
 
   // 2. fetch index
   let index;
@@ -176,10 +221,7 @@ export async function installCommand(
   }
 
   // 7. 成功输出 (V3 §8.1)
-  const restartHint =
-    runtime === "claude-code"
-      ? "Restart Claude Code or open a new session to load this skill."
-      : "Restart Codex CLI or open a new session to load this skill.";
+  const restartHint = `Restart ${PRODUCT_NAME[runtime]} or open a new session to load this skill.`;
   process.stdout.write(
     `✓ installed ${skillName} to ${targetDir}\n  ${restartHint}\n`
   );

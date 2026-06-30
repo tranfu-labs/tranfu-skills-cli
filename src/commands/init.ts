@@ -4,9 +4,14 @@ import { fetchIndex } from "../lib/index-fetch.js";
 import {
   resolveRuntime,
   detectAvailableRuntimes,
-  userSkillDir,
   type Runtime,
 } from "../lib/runtime.js";
+import {
+  resolveTargetPath,
+  SCOPE_USER,
+  type Scope,
+} from "../lib/paths.js";
+import { detectActiveProfile } from "../lib/hermes.js";
 import { runDoctor } from "../lib/doctor.js";
 import { downloadSkillToTarget } from "../lib/skill-fetch.js";
 import { emitError } from "../lib/errors.js";
@@ -17,6 +22,7 @@ const META_SKILLS = ["tranfu-router", "tranfu-publish"];
 const PRODUCT_NAME: Record<Runtime, string> = {
   "claude-code": "Claude Code",
   "codex": "Codex CLI",
+  "hermes": "Hermes Agent",
 };
 
 interface InitOpts {
@@ -163,7 +169,18 @@ export async function initCommand(opts: InitOpts): Promise<void> {
   const results: ResultWithRuntime[] = [];
 
   for (const runtime of runtimes) {
-    const target = userSkillDir(runtime);
+    // hermes 走 detectActiveProfile: 有 active → profile:<name>; 无 → user (默认 profile)
+    let scope: Scope = SCOPE_USER;
+    if (runtime === "hermes") {
+      const active = detectActiveProfile();
+      if (active) scope = { kind: "profile", name: active };
+    }
+    let target: string;
+    try {
+      target = resolveTargetPath({ runtime, scope });
+    } catch (e) {
+      return emitError(e as TfsError);
+    }
 
     for (const skillName of META_SKILLS) {
       const skill = index.skills.find(

@@ -4,6 +4,7 @@ import {
   _checkRuntimeFromList,
   _checkTfsInPath,
   _checkLegacyCachePaths,
+  _checkHermesProfile,
   runDoctor,
 } from "../src/lib/doctor.js";
 
@@ -102,6 +103,48 @@ describe("doctor SDK — tfs-in-path check (6.4)", () => {
     expect(r.status).toBe("warn");
     expect(r.fatal).toBe(false);
     expect(r.message).toContain("fnm");
+  });
+});
+
+describe("doctor SDK — hermes-profile check", () => {
+  it("hermes not available → null (该项不出现)", () => {
+    expect(_checkHermesProfile(false, null, [], null)).toBeNull();
+    expect(_checkHermesProfile(false, "/usr/bin/hermes", ["a"], "a")).toBeNull();
+  });
+
+  it("hermes available + 二进制不在 PATH → warn", () => {
+    const r = _checkHermesProfile(true, null, [], null);
+    expect(r).not.toBeNull();
+    expect(r!.name).toBe("hermes-profile");
+    expect(r!.status).toBe("warn");
+    expect(r!.fatal).toBe(false);
+    expect(r!.message).toContain("二进制不在 PATH");
+  });
+
+  it("hermes available + 二进制在 PATH + 0 命名 profile → ok (default only)", () => {
+    const r = _checkHermesProfile(true, "/usr/bin/hermes", [], null);
+    expect(r).not.toBeNull();
+    expect(r!.status).toBe("ok");
+    expect(r!.message).toContain("default profile only");
+  });
+
+  it("hermes available + 多 profile + active 已知 → ok (active: <X>; all: [..])", () => {
+    const r = _checkHermesProfile(
+      true,
+      "/usr/bin/hermes",
+      ["coder", "work"],
+      "coder"
+    );
+    expect(r).not.toBeNull();
+    expect(r!.status).toBe("ok");
+    expect(r!.message).toContain("active: coder");
+    expect(r!.message).toContain("coder");
+    expect(r!.message).toContain("work");
+  });
+
+  it("hermes available + 多 profile + active=null → ok (active: (default))", () => {
+    const r = _checkHermesProfile(true, "/usr/bin/hermes", ["coder"], null);
+    expect(r!.message).toContain("active: (default)");
   });
 });
 
