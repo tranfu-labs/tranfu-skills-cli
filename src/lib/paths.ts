@@ -124,6 +124,6 @@ export function resolveTargetPath(opts: {
       exit_code: 1,
     };
   }
-  const subdir = runtime === "claude-code" ? ".claude" : ".codex";
+  const subdir = runtime === "claude-code" ? ".claude" : ".agents";
   return join(gitRoot, subdir, "skills");
 }

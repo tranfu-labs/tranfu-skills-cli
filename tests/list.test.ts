@@ -11,7 +11,17 @@ beforeEach(() => {
     `list-r2-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents", "skills"), { recursive: true });
+  const cacheDir = join(tmpHome, ".tfs", "cache");
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(
+    join(cacheDir, "last-check.json"),
+    JSON.stringify({
+      checked_at: new Date().toISOString(),
+      ttl_hours: 6,
+      skills: [],
+    })
+  );
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");

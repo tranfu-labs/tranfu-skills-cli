@@ -62,7 +62,7 @@ dist/                      tsup 构建产物 (gitignored, 仅发包时生成)
 - `src/commands/` 内的命令 NEVER 互相依赖（共享逻辑下沉到 `src/lib/`；命令之间只能通过 lib 通信）。
 - `src/lib/` 内的模块 NEVER 直接 `process.stdout.write` / `process.stderr.write` 用户可见文本（除已有的 `index-fetch.ts` 软回落 warning 这种明确受控点）；用户输出由 commands 层负责，lib 抛 `TfsError` 或返回结构化结果。
 - NEVER 提交 `dist/`（已 gitignore）、`node_modules/`、`~/.tfs/` 下任何运行时产物，也 NEVER 提交本机生成的 `index.json`（公司库的 release asset，本仓库不生成、不缓存进 git）。
-- 测试 NEVER 真改用户真实 `~/.tfs/` 或 `~/.claude/` / `~/.codex/`；MUST mock `node:os` 的 `homedir`（仓库已有惯例，见 `tests/registry.test.ts` 等）。
+- 测试 NEVER 真改用户真实 `~/.tfs/` 或 `~/.claude/` / `~/.agents/`；MUST mock `node:os` 的 `homedir`（仓库已有惯例，见 `tests/registry.test.ts` 等）。
 - `~/.tfs/cache/` 路径与 `installed.json` schema 是用户机器上的稳定契约，NEVER 在未走 ADR / spec-delta 的前提下改它们的位置或结构。
 
 ## 线框图

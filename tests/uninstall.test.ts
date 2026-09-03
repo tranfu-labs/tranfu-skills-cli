@@ -12,7 +12,7 @@ beforeEach(() => {
     `uninstall-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents", "skills"), { recursive: true });
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -86,7 +86,7 @@ describe("uninstall — happy paths", () => {
 
 describe("uninstall — registry-driven (no flags)", () => {
   function seedCodex(name: string, fm: string) {
-    const dir = join(tmpHome, ".codex", "skills", name);
+    const dir = join(tmpHome, ".agents", "skills", name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), `---\n${fm}\n---\n# body\n`);
     return dir;

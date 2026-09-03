@@ -7,16 +7,16 @@
 
 ### Runtime 与 scope 解析
 - Runtime 取值 MUST 是 `claude-code` 或 `codex` 或 `hermes`；显式 `--runtime` 非这三值之一 MUST 抛 `runtime_invalid`（exit 1）。
-- `--runtime` 未指定时 MUST 探测 `~/.claude` 与 `~/.codex` 与 `~/.hermes` 目录是否存在：0 个 → `runtime_required`；1 个 → 静默使用；≥2 个 → `runtime_required`（hint 提示传 `--runtime`，TTY 下 `install` 命令额外走交互选择）。
+- `--runtime` 未指定时 MUST 探测 `~/.claude` 与 `~/.agents` 与 `~/.hermes` 目录是否存在：0 个 → `runtime_required`；1 个 → 静默使用；≥2 个 → `runtime_required`（hint 提示传 `--runtime`，TTY 下 `install` 命令额外走交互选择）。
 - Scope 取值 MUST 是 `user` 或 `project` 或 `profile:<name>`（`profile:<name>` 形式 MUST 仅在 `runtime=hermes` 下接受）。显式 `--scope` 不是这三种形态之一 MUST 抛 `scope_invalid`（exit 1）；profile 名 MUST 匹配 `^[a-zA-Z0-9_-]+$`，否则也抛 `scope_invalid`。
 - 显式 `--scope profile:<name>` 配 `--runtime claude-code|codex` MUST 抛 `scope_unsupported`（exit 1），hint 指出"profile 仅 hermes 支持"。
 - 显式 `--scope project` 配 `--runtime hermes` MUST 抛 `scope_unsupported`（exit 1），hint 指出"hermes 没有 per-cwd 概念，改用 `--scope user` 或 `--scope profile:<name>`"。
 - `--scope project` MUST 在 git 仓库下运行：通过 `git rev-parse --show-toplevel` 取根；非 git repo MUST 抛 `git_repo_required`（exit 1）。
 - 目标安装目录的解析 MUST 是：
   - `(claude-code, user)` → `~/.claude/skills/`
-  - `(codex, user)` → `~/.codex/skills/`
+  - `(codex, user)` → `~/.agents/skills/`
   - `(claude-code, project)` → `<git-root>/.claude/skills/`
-  - `(codex, project)` → `<git-root>/.codex/skills/`
+  - `(codex, project)` → `<git-root>/.agents/skills/`
   - `(hermes, user)` → `~/.hermes/skills/tranfu/`
   - `(hermes, profile:<name>)` → `~/.hermes/profiles/<name>/skills/tranfu/`
 - `tfs install` 的 TTY 交互行为 MUST 为：未传 `--runtime` 且探到 ≥2 个 runtime 走 select；**runtime=claude-code 或 codex 时**未传 `--scope` 走 select；非 TTY 时 `--scope` 默认 `user`（零漂移）。

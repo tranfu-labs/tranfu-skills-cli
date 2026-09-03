@@ -13,7 +13,7 @@ beforeEach(() => {
     `install-interactive-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents"), { recursive: true });
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -66,7 +66,7 @@ describe("install — TTY runtime resolver (slice-3)", () => {
   it("非 TTY + 单 runtime → 静默用之 (零漂移)", async () => {
     setTTY(false);
     // 删 codex 让只剩 claude-code
-    rmSync(join(tmpHome, ".codex"), { recursive: true });
+    rmSync(join(tmpHome, ".agents"), { recursive: true });
     const { _resolveRuntimeInteractive } = await loadInstallHelpers();
     const runtime = await _resolveRuntimeInteractive(undefined);
     expect(runtime).toBe("claude-code");

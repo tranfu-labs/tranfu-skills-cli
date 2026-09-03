@@ -72,7 +72,7 @@ export async function _resolveScopeInteractive(
 
   // claude-code / codex
   if (!isInteractive()) return { scope: SCOPE_USER }; // 非 TTY 默认 user, 零漂移
-  const subdir = runtime === "claude-code" ? ".claude" : ".codex";
+  const subdir = runtime === "claude-code" ? ".claude" : ".agents";
   const picked = await selectFromList({
     question: "装到哪个 scope?",
     choices: [

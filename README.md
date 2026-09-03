@@ -74,7 +74,7 @@ tfs install <name>     # 装到 user / project (TTY 弹选; 非 TTY 默认 user)
 | Runtime | bootstrap | user-level 安装路径 | project-level 安装路径 |
 |---|---|---|---|
 | Claude Code | `tfs init --runtime claude-code` | `~/.claude/skills/<name>/` | `<cwd>/.claude/skills/<name>/` |
-| Codex CLI | `tfs init --runtime codex` | `~/.codex/skills/<name>/` | `<cwd>/.codex/skills/<name>/` |
+| Codex CLI | `tfs init --runtime codex` | `~/.agents/skills/<name>/` | `<cwd>/.agents/skills/<name>/` |
 | 双 runtime | `tfs init --both` | 同上, 两边都装 | — |
 
 未传 `--runtime` 时: 单 runtime 自动探测; 双 runtime + TTY 走交互选择; 非 TTY 抛 `runtime_required`.
@@ -131,9 +131,9 @@ tfs doctor --json                        # 返 {checks, ok, installed_count, out
 └── cache/last-check.json                # stale-check 6h TTL
 
 ~/.claude/skills/<name>/SKILL.md         # Claude Code user-level skill
-~/.codex/skills/<name>/SKILL.md          # Codex CLI user-level skill
+~/.agents/skills/<name>/SKILL.md         # Codex CLI user-level skill
 <cwd>/.claude/skills/<name>/SKILL.md     # project-level
-<cwd>/.codex/skills/<name>/SKILL.md      # project-level
+<cwd>/.agents/skills/<name>/SKILL.md     # Codex CLI project-level
 ```
 
 每个由 `tfs` 装的 skill 在其 `SKILL.md` frontmatter 写 `installed_by: tfs` + version 戳, 用于幂等性判定与升级对比. 手动 `git clone` 拷过来的目录无此戳, `tfs` 不会接管.

@@ -19,7 +19,7 @@ async function withRuntimeDirs(
       existsSync: (p: string | URL) => {
         const s = String(p);
         if (s.endsWith("/.claude")) return !!exists.claude;
-        if (s.endsWith("/.codex")) return !!exists.codex;
+        if (s.endsWith("/.agents")) return !!exists.codex;
         if (s.endsWith("/.hermes")) return !!exists.hermes;
         return actual.existsSync(p);
       },
@@ -84,7 +84,7 @@ describe("resolveRuntime — auto-detect", () => {
     expect(resolveRuntime()).toBe("claude-code");
   });
 
-  it("only ~/.codex → returns codex silently", async () => {
+  it("only ~/.agents → returns codex silently", async () => {
     const { resolveRuntime } = await withRuntimeDirs({ codex: true });
     expect(resolveRuntime()).toBe("codex");
   });
@@ -156,9 +156,9 @@ describe("userSkillDir", () => {
     expect(userSkillDir("claude-code")).toMatch(/\/\.claude\/skills$/);
   });
 
-  it("codex → ~/.codex/skills", async () => {
+  it("codex → ~/.agents/skills", async () => {
     const { userSkillDir } = await import("../src/lib/runtime.js");
-    expect(userSkillDir("codex")).toMatch(/\/\.codex\/skills$/);
+    expect(userSkillDir("codex")).toMatch(/\/\.agents\/skills$/);
   });
 
   it("hermes → ~/.hermes/skills (不含 tranfu 分组, 分组在 resolveTargetPath 加)", async () => {

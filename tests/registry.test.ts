@@ -11,7 +11,7 @@ beforeEach(() => {
     `registry-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents", "skills"), { recursive: true });
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 function seedStampedSkill(runtime: "claude-code" | "codex", name: string, sha: string) {
-  const root = runtime === "claude-code" ? ".claude" : ".codex";
+  const root = runtime === "claude-code" ? ".claude" : ".agents";
   const dir = join(tmpHome, root, "skills", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(

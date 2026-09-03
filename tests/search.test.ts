@@ -328,7 +328,7 @@ describe("--version", () => {
     // Build must exist; skip if dist not built yet
     try {
       const output = execSync("node dist/cli.js --version", {
-        cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
+        cwd: process.cwd(),
         encoding: "utf8",
       });
       expect(output.trim()).toBe(expectedVersion);
@@ -348,7 +348,7 @@ describe("invalid args", () => {
     let exitCode = 0;
     try {
       stdout = execSync("node dist/cli.js search", {
-        cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
+        cwd: process.cwd(),
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -372,7 +372,7 @@ describe("invalid args", () => {
     let exitCode = 0;
     try {
       execSync("node dist/cli.js unknown-command", {
-        cwd: "/Users/wing/Develop/goal-claude/tranfu-skills-cli",
+        cwd: process.cwd(),
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
       });

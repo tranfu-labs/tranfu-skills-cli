@@ -6,14 +6,14 @@ export type Runtime = "claude-code" | "codex" | "hermes";
 
 export const ALL_RUNTIMES: Runtime[] = ["claude-code", "codex", "hermes"];
 
-/** Runtime → user 级根目录 (含 `.claude` / `.codex` / `.hermes`, 不含 `/skills`) */
+/** Runtime → user 级根目录 (含 `.claude` / `.agents` / `.hermes`, 不含 `/skills`) */
 const RUNTIME_HOME_DIRS: Record<Runtime, string> = {
   "claude-code": join(homedir(), ".claude"),
-  "codex": join(homedir(), ".codex"),
+  "codex": join(homedir(), ".agents"),
   "hermes": join(homedir(), ".hermes"),
 };
 
-/** 探测本机已初始化的 runtime (基于 ~/.claude 或 ~/.codex 是否存在) */
+/** 探测本机已初始化的 runtime (基于 ~/.claude / ~/.agents / ~/.hermes 是否存在) */
 export function detectAvailableRuntimes(): Runtime[] {
   return ALL_RUNTIMES.filter((r) => existsSync(RUNTIME_HOME_DIRS[r]));
 }
@@ -51,7 +51,7 @@ export function resolveRuntime(explicit?: string): Runtime {
   if (available.length === 0) {
     throw {
       error: "runtime_required",
-      message: "未检测到任何 runtime (~/.claude, ~/.codex, ~/.hermes 都不存在)",
+      message: "未检测到任何 runtime (~/.claude, ~/.agents, ~/.hermes 都不存在)",
       hint: "先初始化 Claude Code / Codex CLI / Hermes Agent; 或显式传 --runtime=claude-code|codex|hermes",
       exit_code: 1,
     };

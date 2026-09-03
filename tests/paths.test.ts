@@ -87,9 +87,9 @@ describe("resolveTargetPath — user scope", () => {
     expect(p).toMatch(/\/\.claude\/skills$/);
   });
 
-  it("user + codex → ~/.codex/skills", () => {
+  it("user + codex → ~/.agents/skills", () => {
     const p = resolveTargetPath({ runtime: "codex", scope: SCOPE_USER });
-    expect(p).toMatch(/\/\.codex\/skills$/);
+    expect(p).toMatch(/\/\.agents\/skills$/);
   });
 
   it("user + hermes → ~/.hermes/skills/tranfu (含分组)", () => {
@@ -181,9 +181,9 @@ describe("resolveTargetPath — project scope (real git repo)", () => {
     expect(p.includes("paths-test-git")).toBe(true);
   });
 
-  it("project + codex + 在 git repo → <git-root>/.codex/skills", () => {
+  it("project + codex + 在 git repo → <git-root>/.agents/skills", () => {
     const p = resolveTargetPath({ runtime: "codex", scope: SCOPE_PROJECT, cwd: gitRepo });
-    expect(p.endsWith("/.codex/skills")).toBe(true);
+    expect(p.endsWith("/.agents/skills")).toBe(true);
     expect(p.includes("paths-test-git")).toBe(true);
   });
 

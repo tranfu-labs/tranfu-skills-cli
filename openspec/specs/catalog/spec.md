@@ -1,7 +1,7 @@
 # catalog 规格
 
 ## 域定位
-远端公司 skill 库（`tranfu-labs/tranfu-skills`）的发现：抓 `index.json`、按名称/描述匹配、列全量目录。这一域**只读远端 + 本地缓存**，不动用户的 `~/.claude` / `~/.codex` / `~/.tfs/installed.json` 任何安装目录或 registry。
+远端公司 skill 库（`tranfu-labs/tranfu-skills`）的发现：抓 `index.json`、按名称/描述匹配、列全量目录。这一域**只读远端 + 本地缓存**，不动用户的 `~/.claude` / `~/.agents` / `~/.tfs/installed.json` 任何安装目录或 registry。
 
 ## 业务规则
 - MUST 从 `https://github.com/tranfu-labs/tranfu-skills/releases/latest/download/index.json` 抓取 `index.json`。

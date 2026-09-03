@@ -13,7 +13,17 @@ beforeEach(() => {
   );
   // 默认两个 runtime 都存在 (各 test 内按需 rm 来制造单 runtime 场景)
   mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents", "skills"), { recursive: true });
+  const cacheDir = join(tmpHome, ".tfs", "cache");
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(
+    join(cacheDir, "last-check.json"),
+    JSON.stringify({
+      checked_at: new Date().toISOString(),
+      ttl_hours: 6,
+      skills: [],
+    })
+  );
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -46,7 +56,8 @@ function seed(
   name: string,
   frontmatter: string
 ) {
-  const dir = join(tmpHome, `.${runtime}`, "skills", name);
+  const runtimeDir = runtime === "claude" ? ".claude" : ".agents";
+  const dir = join(tmpHome, runtimeDir, "skills", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}\n---\n`);
 }
@@ -209,6 +220,12 @@ describe("installed — 错误路径", () => {
 });
 
 describe("installed — slice-3 outdated 标记", () => {
+  beforeEach(() => {
+    rmSync(join(tmpHome, ".tfs", "cache", "last-check.json"), {
+      force: true,
+    });
+  });
+
   function mockFetchOk(body: unknown) {
     return vi.fn().mockResolvedValue({
       ok: true,

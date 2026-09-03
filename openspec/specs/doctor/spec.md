@@ -56,4 +56,4 @@
   - `tests/init.test.ts`（precondition 失败、单 runtime、`--both`、幂等、meta-skill 缺失；hermes 装 meta 走 active profile 路径）
   - `tests/self-version-check.test.ts`（TTY/非 TTY、`--json`、`--no-nag`、网络挂均不抛）
   - `tests/stale-check.test.ts`（间接覆盖 skills-up-to-date 数据源；hermes 多 profile 扫描）
-- 手动验证：`fnm use 18 && tfs doctor` 应在 node-version `✗` 处 exit 1；`fnm use default && rm -rf ~/.claude ~/.codex ~/.hermes && tfs doctor` 应在 runtime `✗` 处 exit 1；`mkdir -p ~/.hermes && tfs doctor` 应在输出末尾追 hermes-profile 一行。
+- 手动验证：`fnm use 18 && tfs doctor` 应在 node-version `✗` 处 exit 1；在隔离的临时 HOME 中不创建 `~/.claude`、`~/.agents`、`~/.hermes` 时，`tfs doctor` 应在 runtime `✗` 处 exit 1；`mkdir -p ~/.hermes && tfs doctor` 应在输出末尾追 hermes-profile 一行。

@@ -133,8 +133,8 @@ describe("init — happy path (Phase 7.3 单 runtime)", () => {
     expect(out).toContain("Restart Claude Code");
   });
 
-  it("--runtime=codex → 装到 ~/.codex/skills/", async () => {
-    mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+  it("--runtime=codex → 装到 ~/.agents/skills/", async () => {
+    mkdirSync(join(tmpHome, ".agents"), { recursive: true });
     vi.stubGlobal(
       "fetch",
       mockFetchSequence(indexWithMetas, [
@@ -150,7 +150,7 @@ describe("init — happy path (Phase 7.3 单 runtime)", () => {
     await initCommand({ runtime: "codex" });
 
     expect(
-      existsSync(join(tmpHome, ".codex", "skills", "tranfu-router"))
+      existsSync(join(tmpHome, ".agents", "skills", "tranfu-router"))
     ).toBe(true);
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
     expect(out).toContain("Restart Codex CLI");
@@ -217,7 +217,7 @@ installed_source: meta
 describe("init — Phase 7.4 双 runtime", () => {
   it("--both → 装到两个 runtime", async () => {
     mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+    mkdirSync(join(tmpHome, ".agents"), { recursive: true });
     vi.stubGlobal(
       "fetch",
       mockFetchSequence(indexWithMetas, [
@@ -240,7 +240,7 @@ describe("init — Phase 7.4 双 runtime", () => {
       existsSync(join(tmpHome, ".claude", "skills", "tranfu-router"))
     ).toBe(true);
     expect(
-      existsSync(join(tmpHome, ".codex", "skills", "tranfu-router"))
+      existsSync(join(tmpHome, ".agents", "skills", "tranfu-router"))
     ).toBe(true);
 
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");
@@ -361,7 +361,7 @@ describe("init — 错误路径", () => {
 
   it("2 runtime + 无 --runtime → runtime_required (7.4 留交互)", async () => {
     mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-    mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+    mkdirSync(join(tmpHome, ".agents"), { recursive: true });
     const { initCommand } = await loadInitWithDoctor(true);
     const stderrSpy = vi
       .spyOn(process.stderr, "write")

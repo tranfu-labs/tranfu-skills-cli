@@ -12,7 +12,7 @@ beforeEach(() => {
     `update-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude", "skills"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex", "skills"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents", "skills"), { recursive: true });
   vi.resetModules();
   vi.doMock("node:os", async () => {
     const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -52,7 +52,8 @@ function seedSkill(
   name: string,
   sha: string
 ) {
-  const dir = join(tmpHome, `.${runtime}`, "skills", name);
+  const runtimeDir = runtime === "claude" ? ".claude" : ".agents";
+  const dir = join(tmpHome, runtimeDir, "skills", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "SKILL.md"),

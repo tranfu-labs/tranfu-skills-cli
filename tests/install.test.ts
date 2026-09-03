@@ -13,7 +13,7 @@ beforeEach(() => {
     `install-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
   );
   mkdirSync(join(tmpHome, ".claude"), { recursive: true });
-  mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+  mkdirSync(join(tmpHome, ".agents"), { recursive: true });
   vi.resetModules();
 });
 
@@ -119,7 +119,7 @@ describe("install — happy path", () => {
     expect(out).toContain("Restart Claude Code");
   });
 
-  it("装到 ~/.codex/skills/ (--runtime=codex)", async () => {
+  it("装到 ~/.agents/skills/ (--runtime=codex)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetchQueue([
@@ -135,7 +135,7 @@ describe("install — happy path", () => {
 
     await installCommand("auth-helper", { scope: "user", runtime: "codex" });
 
-    expect(existsSync(join(tmpHome, ".codex", "skills", "auth-helper"))).toBe(
+    expect(existsSync(join(tmpHome, ".agents", "skills", "auth-helper"))).toBe(
       true
     );
     const out = stdoutSpy.mock.calls.map((c) => c[0]).join("");

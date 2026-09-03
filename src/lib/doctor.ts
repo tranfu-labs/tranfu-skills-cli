@@ -4,7 +4,7 @@
  *
  * Checks (Phase 6.1-6.5 + hermes-profile):
  * - node-version (fatal): Node >=20
- * - runtime (fatal): >=1 个 ~/.claude / ~/.codex / ~/.hermes 存在
+ * - runtime (fatal): >=1 个 ~/.claude / ~/.agents / ~/.hermes 存在
  * - tfs-in-path (warn): which tfs 能找到, 且与 process.execPath 同 node 目录
  * - legacy-cache (warn): 检测旧 ~/.aistore-labs / ~/.tranfu-labs 缓存
  * - hermes-profile (warn, 条件性): 仅当 hermes available 时追加, 报告 active + 所有 profile
@@ -68,7 +68,7 @@ export function _checkRuntimeFromList(available: Runtime[]): DoctorCheck {
       name: "runtime",
       status: "fail",
       message:
-        "未检测到任何 runtime (~/.claude, ~/.codex, ~/.hermes 都不存在). 先初始化 Claude Code / Codex CLI / Hermes Agent.",
+        "未检测到任何 runtime (~/.claude, ~/.agents, ~/.hermes 都不存在). 先初始化 Claude Code / Codex CLI / Hermes Agent.",
       fatal: true,
     };
   }
