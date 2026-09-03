@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 (2026-09-03)
+
+### Changed
+- Codex skills 根目录从旧的 `.codex` 迁移到当前的 `.agents`：user scope 写入 `~/.agents/skills/`，project scope 写入 `<git-root>/.agents/skills/`。
+- runtime 自动探测、`tfs doctor` 提示、安装交互文案、README 与 OpenSpec 事实规格同步使用 `.agents`；Claude Code 与 Hermes 路径保持不变。
+
+### Fixed
+- 测试中的 CLI 工作目录不再绑定某个本机绝对路径。
+- `installed` / `list` 测试使用隔离的 stale-check cache，避免依赖外部网络响应时间导致并发测试超时。
+
+### Migration
+- 旧版 `tfs` 已装在 `~/.codex/skills/` 或项目 `.codex/skills/` 下的 Codex skills 不会自动搬迁；请使用 `tfs init --runtime codex` 和 `tfs install ... --runtime codex` 重新安装到 `.agents/skills/`。
+
+### Why
+Codex 最新版从 `.agents/skills/` 发现 skills；继续写入 `.codex/skills/` 会出现“安装成功但 Codex 不加载”的假成功。0.7.0 把安装、扫描、升级与卸载统一切到新路径，并明确旧目录需要重新安装。
+
 ## 0.6.0 (2026-06-30)
 
 ### Added
