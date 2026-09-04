@@ -63,9 +63,9 @@
 ### Update
 - `tfs update`（无 flag）= 升 CLI 自身 + 升所有已装 skill。`--self` 仅升 CLI；`--skills-only` 仅升 skill。
 - 升 CLI MUST 比较本地 `npm list -g tranfu-skills` 与 `npm view tranfu-skills version`：相同 → noop；不同 → `npm install -g tranfu-skills@latest`。两边都读不到（网络挂或包没发过）MUST 抛 `network_error`（exit 2）而不是盲目 install。
-- 升 skill MUST 走 `detectOutdated`：扫**所有 runtime 下所有可达 scope** 已装的有戳 skill（claude-code/codex 仅扫 user scope；hermes 同时扫默认 profile 与 `listHermesProfiles()` 列出的所有命名 profile），与远端 index 比 sha；状态分 `noop` / `outdated` / `deleted-upstream`（远端 index 已无此 skill）/ `deleted-upstream-acked`。每条结果 MUST 携带 `runtime` 与 `scope`（供 update 重装时定位目标）。
+- 升 skill MUST 走 `detectOutdated`：扫**所有 runtime 下所有可达 scope** 已装的有戳 skill（claude-code/codex 仅扫 user scope；hermes 同时扫默认 profile 与 `listHermesProfiles()` 列出的所有命名 profile），与远端 index 比 sha；状态分 `noop` / `outdated` / `deleted-upstream`（远端 index 已无此 skill）/ `deleted-upstream-acked`。每条结果 MUST 携带 `runtime`、`scope` 与 tfs 已解析的最终绝对 `path`（供 update 重装和外部更新前备份定位目标；旧 stale cache entry 可缺省 path）。
 - 对 `outdated` 的 skill MUST rm 后重装；对 `deleted-upstream` MUST 保留文件不删，仅在输出里 warn。
-- `--check-only` MUST 只读、不 mutate；与 `--self` / `--ack-deletions` 互斥（任一组合 MUST 抛 `invalid_args` exit 1）。`--check-only` 输出 MUST 过滤掉 `noop`。
+- `--check-only` MUST 只读、不 mutate；与 `--self` / `--ack-deletions` 互斥（任一组合 MUST 抛 `invalid_args` exit 1）。`--check-only` 输出 MUST 过滤掉 `noop`，JSON 中每个非 noop 项 MUST 带最终绝对 `path`；实际 update JSON 同样返回 path。
 - `--ack-deletions` MUST 把当前所有 `deleted-upstream` 的 name 合并已有 `~/.tfs/cache/ack.json` 写回；写完后这些 skill 在下次 detect 中变成 `deleted-upstream-acked`，人话模式静默（JSON 仍输出）。
 
 ### Installed / List 输出

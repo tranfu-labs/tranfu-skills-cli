@@ -40,5 +40,7 @@ export interface SkillUpdateResult {
   runtime: Runtime;
   /** scope 缺省视为 {kind:"user"} (兼容旧调用). hermes 多 profile 场景 MUST 显式带. */
   scope?: Scope;
+  /** tfs 已按 runtime/scope 解析的本机绝对目标路径；旧 cache entry 可缺省。 */
+  path?: string;
   error?: string;
 }

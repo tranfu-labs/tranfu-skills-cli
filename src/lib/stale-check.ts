@@ -128,6 +128,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
             : "deleted-upstream",
           runtime,
           scope,
+          path: skillDir,
         });
         continue;
       }
@@ -140,6 +141,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
           status: "noop",
           runtime,
           scope,
+          path: skillDir,
         });
         continue;
       }
@@ -151,6 +153,7 @@ export async function detectOutdated(): Promise<DetectOutdatedResult> {
         status: "outdated",
         runtime,
         scope,
+        path: skillDir,
       });
     }
   }

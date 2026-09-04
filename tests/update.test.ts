@@ -123,8 +123,8 @@ function mockFetchSequence(
 
 describe("update --skills-only (Phase 5.2)", () => {
   it("跨 runtime 扫 → sha 一致全 noop, 不下载文件", async () => {
-    seedSkill("claude", "skill-a", "new-sha-a");
-    seedSkill("codex", "skill-b", "current-sha-b");
+    const claudePath = seedSkill("claude", "skill-a", "new-sha-a");
+    const codexPath = seedSkill("codex", "skill-b", "current-sha-b");
     const fetchSpy = mockFetchSequence(baseIndex, []);
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -139,6 +139,9 @@ describe("update --skills-only (Phase 5.2)", () => {
     expect(parsed.self).toBeNull();
     expect(parsed.skills).toHaveLength(2);
     expect(parsed.skills.every((s: any) => s.status === "noop")).toBe(true);
+    expect(parsed.skills.map((s: any) => s.path).sort()).toEqual(
+      [claudePath, codexPath].sort()
+    );
     // 只 fetch 一次 (index), 不拉文件
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -461,7 +464,7 @@ describe("update --check-only (Phase 1 slice-1)", () => {
   });
 
   it("returns skills with status='outdated' when stamp sha != index sha", async () => {
-    seedSkill("claude", "skill-a", "old-sha-a");
+    const skillPath = seedSkill("claude", "skill-a", "old-sha-a");
     vi.stubGlobal("fetch", mockFetchSequence(baseIndex, []));
     const { updateCommand } = await loadUpdate({});
     const stdoutSpy = vi
@@ -479,6 +482,7 @@ describe("update --check-only (Phase 1 slice-1)", () => {
       from: "old-sha-a",
       to: "new-sha-a",
       runtime: "claude-code",
+      path: skillPath,
     });
     expect(parsed.cached).toBe(false);
     expect(parsed.checked_at).toBe("2026-05-14T00:00:00Z");

@@ -246,6 +246,7 @@ export async function updateCommand(opts: UpdateOpts): Promise<void> {
           status: r.status,
           ...(r.runtime ? { runtime: r.runtime } : {}),
           ...(r.scope ? { scope: scopeToString(r.scope) } : {}),
+          ...(r.path ? { path: r.path } : {}),
           ...(r.error ? { error: r.error } : {}),
         })),
       }) + "\n"
