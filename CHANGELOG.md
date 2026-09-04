@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 (2026-09-04)
+
+### Added
+- `tfs update --check-only --json` 的每个待处理 skill 现在都会返回 tfs 已按 runtime/scope 解析好的最终绝对 `path`。
+- 实际执行 `tfs update --json` 时同样返回 `path`；`noop`、`outdated`、`deleted-upstream` 等检测结果在新生成时都携带该字段。
+
+### Compatibility
+- `path` 是新增的可选 JSON/type 字段，旧 stale cache entry 仍可不含该字段；现有文本输出、扫描范围、状态和更新行为不变。
+
+### Why
+外部更新器现在可以只备份本轮真正要更新的目录，无需从 installed 全量列表重新推导路径，也不会因访问无关 project scope 触发额外的 macOS 文件权限请求。
+
 ## 0.7.0 (2026-09-03)
 
 ### Changed
